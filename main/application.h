@@ -15,7 +15,7 @@
 #include "ota.h"
 #include "audio_service.h"
 #include "device_state_event.h"
-
+#include "alarm.h"
 
 #define MAIN_EVENT_SCHEDULE (1 << 0)
 #define MAIN_EVENT_SEND_AUDIO (1 << 1)
@@ -24,7 +24,7 @@
 #define MAIN_EVENT_ERROR (1 << 4)
 #define MAIN_EVENT_CHECK_NEW_VERSION_DONE (1 << 5)
 #define MAIN_EVENT_CLOCK_TICK (1 << 6)
-
+#define ALARM_EVENT (1 << 7)
 
 enum AecMode {
     kAecOff,
@@ -62,7 +62,10 @@ public:
     AecMode GetAecMode() const { return aec_mode_; }
     void PlaySound(const std::string_view& sound);
     AudioService& GetAudioService() { return audio_service_; }
-
+    // alarm
+    AlarmManager* alarm_m_ = nullptr;
+    void SetAlarmEvent();
+    void ClearAlarmEvent();
 private:
     Application();
     ~Application();

@@ -13,6 +13,7 @@
 #include "application.h"
 #include "display.h"
 #include "board.h"
+#include "alarm.h"
 #include "settings.h"
 
 #define TAG "MCP"
@@ -109,6 +110,167 @@ void McpServer::AddCommonTools() {
             });
     }
 
+    // alarm
+    AddTool("self.alarm.set",
+        "为用户添加各种闹钟提醒功能，比如：帮我定一个10分钟的闹钟；20秒后提醒我关煤气炉；每天下午2点提醒我吃药"
+        "Args:"
+        "delay: int, 以秒为单位，多久之后执行；如果是定时的闹钟那么delay为-1"
+        "hour: int,  表示时；如早上7点 the hour can be 7 ,晚上8点 the hour can be 20，如果没明确说 the hour can be -1"
+        "minute: int, 分钟；早上7:00， the minute can be 0， 如果7点半 the minute can be 30 如果没明确说 the minute can be -1"
+        "repeat: int , 表示重复次数；如果没说则默认1次，否则为具体的次数，如果说每天/每小时等重复但是没有具体次数的，最多重复10000次"
+        "interval: int, 提醒间隔时间，单位为秒；repeat > 0时生效，比如每小时提醒我，interval should be 3600，每天提醒我，interval should be 86400"
+        "name: string, 提醒名称"
+        "Return:"
+        "A JSON object that indicates whether the alarm is set successfully.",
+        PropertyList({
+            Property("delay", kPropertyTypeInteger),
+            Property("hour", kPropertyTypeInteger),
+            Property("minute", kPropertyTypeInteger),
+            Property("repeat", kPropertyTypeInteger),
+            Property("interval", kPropertyTypeInteger),
+            Property("name", kPropertyTypeString)
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto& app = Application::GetInstance();
+            if(app.alarm_m_ == nullptr){
+                ESP_LOGE(TAG, "AlarmManager is nullptr");
+                 return std::string(R"({"success":false,"message":"AlarmManager is not initialized"})");
+            }
+            ESP_LOGI(TAG, "SetAlarm");
+            int delay = properties["delay"].value<int>();
+            int hour = properties["hour"].value<int>();
+            int minute = properties["minute"].value<int>();
+            int repeat = properties["repeat"].value<int>();
+            int interval = properties["interval"].value<int>();
+            std::string name = properties["name"].value<std::string>();
+            ESP_LOGI(TAG, "SetAlarm delay %d hour %d minute %d repeat %d interval %d name %s", delay, hour, minute, repeat, interval, name.c_str());
+            std::string result = app.alarm_m_->SetAlarm(delay, hour, minute, repeat, interval, name);
+            if (result.empty()) {
+                return std::string(R"({"success":true,"message":"Alarm set successfully"})");
+            } else {
+                return std::string(R"({"success":false,"message":")" + result + R"("})");
+            }
+        });
+    AddTool("self.alarm.del",
+        "根据关键词删除其中一个闹钟或提醒，比如：我想删除早餐的闹钟， the keyword should be '早餐'"
+        "Args:\n"
+        "  `keyword`: The keyword of the alarm.\n"
+        "Return:\n"
+        "  A JSON object that indicates whether the alarm is deleted successfully.",
+        PropertyList({
+            Property("keyword", kPropertyTypeString)
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto& app = Application::GetInstance();
+            if(app.alarm_m_ == nullptr){
+                ESP_LOGE(TAG, "AlarmManager is nullptr");
+                 return std::string(R"({"success":false,"message":"AlarmManager is not initialized"})");
+            }
+            ESP_LOGI(TAG, "DelAlarm");
+            std::string keyword = properties["keyword"].value<std::string>();
+            std::string result = app.alarm_m_->DelAlarm(keyword);
+            if (result.empty()) {
+                return std::string(R"({"success":true,"message":"Alarm delete successfully"})");
+            } else {
+                return std::string(R"({"success":false,"message":")" + result + R"("})");
+            }
+        });
+    AddTool("self.alarm.cleanup",
+        "清空所有的提醒和闹钟；比如：我想清空/关闭所有的提醒和闹钟",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto& app = Application::GetInstance();
+            if(app.alarm_m_ == nullptr){
+                ESP_LOGE(TAG, "AlarmManager is nullptr");
+                 return std::string(R"({"success":false,"message":"AlarmManager is not initialized"})");
+            }
+            ESP_LOGI(TAG, "CleanUp Alarm");
+            app.alarm_m_->CleanUpAlarm();
+            return std::string(R"({"success":true,"message":"Alarm cleaned up successfully"})");
+        });
+    AddTool("self.alarm.queryall",
+        "查询所有的提醒和闹钟",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto& app = Application::GetInstance();
+            if(app.alarm_m_ == nullptr){
+                ESP_LOGE(TAG, "AlarmManager is nullptr");
+                 return std::string(R"({"success":false,"message":"AlarmManager is not initialized"})");
+            }
+            ESP_LOGI(TAG, "Query All Alarm");
+            std::string alarm_list = app.alarm_m_->QueryAllAlarm();
+            return std::string(R"({"success":true,"alarms":)") + alarm_list + R"(})";
+        });
+    // knowledge base
+    AddTool("self.kb.query",
+        "当用户咨询硅基流动产品相关内容时，可以通过关键词检索知识库获取更多的上下文"
+        "Args:"
+        "query: str, 搜索的关键词，多个关键词用空格隔开",
+        PropertyList({
+            Property("query", kPropertyTypeString)
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto http = Board::GetInstance().GetNetwork()->CreateHttp(3);
+            http->SetHeader("Content-Type", "application/json");
+            http->SetHeader("X-API-Key", "sk-Xea7HELObS3gYurLAgC-nepXSZdT6m3CwkV6nYqSxePRzdTa");
+            // 构造请求的JSON数据
+            cJSON* json_data = cJSON_CreateObject();
+            cJSON_AddStringToObject(json_data, "query_text", properties["query"].value<std::string>().c_str());
+            cJSON_AddNumberToObject(json_data, "vector_threshold", 0.5);
+            cJSON_AddNumberToObject(json_data, "keyword_threshold", 0.3);
+            cJSON_AddNumberToObject(json_data, "match_count", 3);
+            char* json_string = cJSON_PrintUnformatted(json_data);
+            std::string data(json_string);
+            cJSON_free(json_string);
+            cJSON_Delete(json_data);
+            http->SetContent(std::move(data));
+            if (!http->Open("GET", "http://106.55.224.164:3008/api/v1/knowledge-bases/kb-00000001/hybrid-search")) {
+                ESP_LOGE(TAG, "Failed to open HTTP connection");
+                return std::string(R"({"success":false,"message":"Failed to connect to knowledge base"})");
+            }
+            auto status_code = http->GetStatusCode();
+            if (status_code != 200) {
+                ESP_LOGE(TAG, "Knowledge base request failed with status code: %d", status_code);
+                return std::string(R"({"success":false,"message":"Knowledge base request failed"})");
+            }
+            std::string response = http->ReadAll();
+            http->Close();
+            // 解析响应并提取需要的数据
+            cJSON* root = cJSON_Parse(response.c_str());
+            if (root == nullptr) {
+                ESP_LOGE(TAG, "Failed to parse knowledge base response");
+                return std::string(R"({"success":false,"message":"Failed to parse knowledge base response"})");
+            }
+            
+            cJSON* data_array = cJSON_GetObjectItem(root, "data");
+            if (!cJSON_IsArray(data_array)) {
+                cJSON_Delete(root);
+                ESP_LOGE(TAG, "Invalid data format in knowledge base response");
+                return std::string(R"({"success":false,"message":"Invalid data format in knowledge base response"})");
+            }
+            // 创建只包含content字段的简单数组
+            cJSON* content_array = cJSON_CreateArray();
+            int array_size = cJSON_GetArraySize(data_array);
+            for (int i = 0; i < array_size && i < 3; i++) { // 只取前3个结果
+                cJSON* item = cJSON_GetArrayItem(data_array, i);
+                if (item) {
+                    cJSON* content = cJSON_GetObjectItem(item, "content");
+                    if (content) {
+                        cJSON_AddItemToArray(content_array, cJSON_CreateString(content->valuestring));
+                    }
+                }
+            }
+            cJSON_Delete(root);
+            // 构造简化后的响应
+            cJSON* result = cJSON_CreateObject();
+            cJSON_AddItemToObject(result, "contents", content_array);
+            cJSON_AddBoolToObject(result, "success", true);
+            char* result_json = cJSON_PrintUnformatted(result);
+            std::string result_str(result_json);
+            cJSON_free(result_json);
+            cJSON_Delete(result);
+            return result_str;
+        });
     // Restore the original tools list to the end of the tools list
     tools_.insert(tools_.end(), original_tools.begin(), original_tools.end());
 }

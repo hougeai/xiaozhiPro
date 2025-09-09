@@ -31,6 +31,7 @@ static const char* const STATE_STRINGS[] = {
     "upgrading",
     "activating",
     "audio_testing",
+    "alarm",
     "fatal_error",
     "invalid_state"
 };
@@ -324,6 +325,10 @@ void Application::ToggleChatState() {
         Schedule([this]() {
             protocol_->CloseAudioChannel();
         });
+    } else if (device_state_ == kDeviceStateAlarm) {
+        alarm_m_->ClearRing();
+        ESP_LOGI(TAG, "Alarm cleared Toggle");
+        SetDeviceState(kDeviceStateIdle);
     }
 }
 
@@ -468,7 +473,9 @@ void Application::Start() {
         Schedule([this]() {
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
-            SetDeviceState(kDeviceStateIdle);
+            if(device_state_ != kDeviceStateAlarm) {
+                SetDeviceState(kDeviceStateIdle);
+            }
         });
     });
     protocol_->OnIncomingJson([this, display](const cJSON* root) {
@@ -573,6 +580,15 @@ void Application::Start() {
         // Play the success sound to indicate the device is ready
         audio_service_.PlaySound(Lang::Sounds::OGG_SUCCESS);
     }
+    // 添加 alarm 实例
+    if (has_server_time_) {
+        ESP_LOGI(TAG, "Server time synchronized, start alarm manager");
+        alarm_m_ = new AlarmManager();
+    } else {
+        ESP_LOGI(TAG, "Server time not synchronized, alarm manager disabled");
+        alarm_m_ = nullptr;
+    }
+
 }
 
 // Add a async task to MainLoop
@@ -597,6 +613,7 @@ void Application::MainEventLoop() {
             MAIN_EVENT_WAKE_WORD_DETECTED |
             MAIN_EVENT_VAD_CHANGE |
             MAIN_EVENT_CLOCK_TICK |
+            ALARM_EVENT |
             MAIN_EVENT_ERROR, pdTRUE, pdFALSE, portMAX_DELAY);
 
         if (bits & MAIN_EVENT_ERROR) {
@@ -644,6 +661,33 @@ void Application::MainEventLoop() {
                 SystemInfo::PrintHeapStats();
             }
         }
+        if ((bits & ALARM_EVENT) && (alarm_m_ != nullptr)) {
+             // 闹钟来了
+            if (alarm_m_->IsRing()) {
+                if (device_state_ != kDeviceStateAlarm){
+                    if (device_state_ == kDeviceStateActivating) {
+                        Reboot();
+                        return;
+                    } else if (device_state_ == kDeviceStateSpeaking) {
+                        ESP_LOGI(TAG, "Alarm ring, abort speaking");
+                        AbortSpeaking(kAbortReasonNone);
+                        protocol_->CloseAudioChannel();
+                        aborted_ = false; // 不停止本地的播放
+                    } else if (device_state_ == kDeviceStateListening) {
+                        ESP_LOGI(TAG, "Alarm ring, close audio channel");
+                        protocol_->CloseAudioChannel();
+                    }
+                    ESP_LOGI(TAG, "Alarm ring, begging status %s", STATE_STRINGS[device_state_]);
+                    SetDeviceState(kDeviceStateAlarm); //强制设置为播放模式
+                }
+                if (audio_service_.IsIdle()){
+                    PlaySound(Lang::Sounds::OGG_RING);
+                }
+                SetAlarmEvent();
+            } else {
+                ClearAlarmEvent();
+            }
+        }
     }
 }
 
@@ -681,6 +725,10 @@ void Application::OnWakeWordDetected() {
     } else if (device_state_ == kDeviceStateSpeaking) {
         AbortSpeaking(kAbortReasonWakeWordDetected);
     } else if (device_state_ == kDeviceStateActivating) {
+        SetDeviceState(kDeviceStateIdle);
+    } else if (device_state_ == kDeviceStateAlarm){
+        alarm_m_->ClearRing();
+        ESP_LOGI(TAG, "Wake word detected in alarm state, clear alarm");
         SetDeviceState(kDeviceStateIdle);
     }
 }
@@ -743,6 +791,19 @@ void Application::SetDeviceState(DeviceState state) {
         case kDeviceStateSpeaking:
             display->SetStatus(Lang::Strings::SPEAKING);
 
+            if (listening_mode_ != kListeningModeRealtime) {
+                audio_service_.EnableVoiceProcessing(false);
+                // Only AFE wake word can be detected in speaking mode
+#if CONFIG_USE_AFE_WAKE_WORD
+                audio_service_.EnableWakeWordDetection(true);
+#else
+                audio_service_.EnableWakeWordDetection(false);
+#endif
+            }
+            audio_service_.ResetDecoder();
+            break;
+        case kDeviceStateAlarm:
+            display->SetEmotion("neutral");
             if (listening_mode_ != kListeningModeRealtime) {
                 audio_service_.EnableVoiceProcessing(false);
                 // Only AFE wake word can be detected in speaking mode
@@ -846,4 +907,12 @@ void Application::SetAecMode(AecMode mode) {
 
 void Application::PlaySound(const std::string_view& sound) {
     audio_service_.PlaySound(sound);
+}
+
+void Application::SetAlarmEvent(){
+    xEventGroupSetBits(event_group_, ALARM_EVENT);
+}
+
+void Application::ClearAlarmEvent(){
+    xEventGroupClearBits(event_group_, ALARM_EVENT);
 }
