@@ -24,7 +24,6 @@
 #define MAIN_EVENT_ERROR (1 << 4)
 #define MAIN_EVENT_CHECK_NEW_VERSION_DONE (1 << 5)
 #define MAIN_EVENT_CLOCK_TICK (1 << 6)
-#define ALARM_EVENT (1 << 7)
 
 enum AecMode {
     kAecOff,
@@ -91,6 +90,8 @@ private:
     void CheckAssetsVersion();
     void ShowActivationCode(const std::string& code, const std::string& message);
     void SetListeningMode(ListeningMode mode);
+    
+    bool alarm_triggered_ = false;
 };
 
 #endif // _APPLICATION_H_

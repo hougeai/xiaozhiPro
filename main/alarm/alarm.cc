@@ -16,7 +16,8 @@ std::string FormatTimestamp(time_t timestamp) {
 
 AlarmManager::AlarmManager(){
     ESP_LOGI(TAG, "AlarmManager init");
-    ring_flag = false;
+    ring_flag_ = false;
+    ring_name_ = "alarm";
     timer_ = nullptr; // 初始为空
 
     esp_timer_create_args_t timer_args = {
@@ -75,7 +76,6 @@ void AlarmManager::CreateAndStartTimer(int delay) {
 }
 
 void AlarmManager::OnAlarm(){
-    std::lock_guard<std::mutex> lock(mutex_);
     time_t now = time(NULL);
     // 获取最接近的闹钟
     Alarm *alarm_first = nullptr;
@@ -87,18 +87,14 @@ void AlarmManager::OnAlarm(){
     }
     if (alarm_first == nullptr) {
         ESP_LOGI(TAG, "OnAlarm triggered but no valid alarm due");
-        ring_flag = false;
+        ring_flag_ = false;
         return;
     }
     // 有闹钟要提醒
     ESP_LOGI(TAG, "=----ring----=");
-    ring_flag = true;
-    auto display = Board::GetInstance().GetDisplay();
-    auto &app = Application::GetInstance();
-    app.SetAlarmEvent(); // 设置闹钟事件
-    
-    std::string status_text = std::string(Lang::Strings::ALARM) + ": " + alarm_first->name;
-    display->SetStatus(status_text.c_str());  // 显示"Alarm: 闹钟名称"
+    ring_flag_ = true;
+    // 构造闹钟提醒文本
+    ring_name_ = alarm_first->name + " " + FormatTimestamp(alarm_first->time);
     ESP_LOGI(TAG, "Alarm: %s is ringing", alarm_first->name.c_str());
     
     // 清除过期的闹钟
@@ -305,9 +301,7 @@ std::string AlarmManager::QueryAllAlarm(){
 
 void AlarmManager::ClearRing(){
     ESP_LOGI("Alarm", "clear");
-    ring_flag = false;
-    auto &app = Application::GetInstance();
-    app.ClearAlarmEvent(); // 清除闹钟事件
+    ring_flag_ = false;
 };
 
 void AlarmManager::CleanUpAlarm() {

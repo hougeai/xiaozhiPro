@@ -41,15 +41,17 @@ public:
     // 闹钟响了的处理函数
     void OnAlarm();
     // 闹钟是不是响了的标志位
-    bool IsRing(){ return ring_flag; };
+    bool IsRing(){ return ring_flag_; };
     // 清除闹钟标志位
     void ClearRing();
-
+    // 获取当前闹钟内容
+    std::string GetRingName(){ return ring_name_; };
 private:
     std::vector<Alarm> alarms_; // 闹钟列表
     std::mutex mutex_; // 互斥锁
     esp_timer_handle_t timer_; // 定时器
 
-    std::atomic<bool> ring_flag{false}; 
+    std::atomic<bool> ring_flag_{false}; 
+    std::string ring_name_;
 };
 #endif

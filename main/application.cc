@@ -483,6 +483,7 @@ void Application::Start() {
         auto type = cJSON_GetObjectItem(root, "type");
         if (strcmp(type->valuestring, "tts") == 0) {
             auto state = cJSON_GetObjectItem(root, "state");
+            ESP_LOGI(TAG, "TTS state: %s", state->valuestring);
             if (strcmp(state->valuestring, "start") == 0) {
                 Schedule([this]() {
                     aborted_ = false;
@@ -493,7 +494,10 @@ void Application::Start() {
             } else if (strcmp(state->valuestring, "stop") == 0) {
                 Schedule([this]() {
                     if (device_state_ == kDeviceStateSpeaking) {
-                        if (listening_mode_ == kListeningModeManualStop) {
+                        if (alarm_triggered_) {
+                            alarm_triggered_ = false;
+                            SetDeviceState(kDeviceStateAlarm);
+                        } else if (listening_mode_ == kListeningModeManualStop) {
                             SetDeviceState(kDeviceStateIdle);
                         } else {
                             SetDeviceState(kDeviceStateListening);
@@ -613,9 +617,7 @@ void Application::MainEventLoop() {
             MAIN_EVENT_WAKE_WORD_DETECTED |
             MAIN_EVENT_VAD_CHANGE |
             MAIN_EVENT_CLOCK_TICK |
-            ALARM_EVENT |
             MAIN_EVENT_ERROR, pdTRUE, pdFALSE, portMAX_DELAY);
-
         if (bits & MAIN_EVENT_ERROR) {
             SetDeviceState(kDeviceStateIdle);
             Alert(Lang::Strings::ERROR, last_error_message_.c_str(), "circle_xmark", Lang::Sounds::OGG_EXCLAMATION);
@@ -651,6 +653,7 @@ void Application::MainEventLoop() {
 
         if (bits & MAIN_EVENT_CLOCK_TICK) {
             clock_ticks_++;
+            ESP_LOGI(TAG, "Clock tick %d", clock_ticks_);
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
         
@@ -660,32 +663,36 @@ void Application::MainEventLoop() {
                 // SystemInfo::PrintTaskList();
                 SystemInfo::PrintHeapStats();
             }
-        }
-        if ((bits & ALARM_EVENT) && (alarm_m_ != nullptr)) {
-             // 闹钟来了
-            if (alarm_m_->IsRing()) {
+            if ((alarm_m_ != nullptr) && (alarm_m_->IsRing())) {
+                // 闹钟来了
+                ESP_LOGI(TAG, "Alarm ring, device status %s", STATE_STRINGS[device_state_]);
                 if (device_state_ != kDeviceStateAlarm){
-                    if (device_state_ == kDeviceStateActivating) {
-                        Reboot();
-                        return;
-                    } else if (device_state_ == kDeviceStateSpeaking) {
-                        ESP_LOGI(TAG, "Alarm ring, abort speaking");
-                        AbortSpeaking(kAbortReasonNone);
-                        protocol_->CloseAudioChannel();
-                        aborted_ = false; // 不停止本地的播放
-                    } else if (device_state_ == kDeviceStateListening) {
-                        ESP_LOGI(TAG, "Alarm ring, close audio channel");
-                        protocol_->CloseAudioChannel();
+                    if (!alarm_triggered_) {
+                        ESP_LOGI(TAG, "Alarm ring, send alarm message to cloud");
+                        if (device_state_ == kDeviceStateSpeaking) {
+                            ESP_LOGI(TAG, "Alarm ring, abort speaking");
+                            AbortSpeaking(kAbortReasonNone);
+                            aborted_ = false; // 不是打断
+                        }
+                        // 给云端发消息
+                        if (!protocol_->IsAudioChannelOpened()) {
+                            if (!protocol_->OpenAudioChannel()) {
+                                // 连接失败也要设置闹钟状态，播放本地音频
+                                SetDeviceState(kDeviceStateAlarm);
+                                if (audio_service_.IsIdle()) PlaySound(Lang::Sounds::OGG_RING);
+                                continue;
+                            }
+                        }
+                        SetDeviceState(kDeviceStateListening);
+                        std::string message = alarm_m_->GetRingName() + "闹钟时间已到，请你播报闹钟名称和当前时间，并给一些关于闹钟名称事项的建议。";
+                        protocol_->SendWakeWordDetected(message);
+                        alarm_triggered_ = true;
                     }
-                    ESP_LOGI(TAG, "Alarm ring, begging status %s", STATE_STRINGS[device_state_]);
-                    SetDeviceState(kDeviceStateAlarm); //强制设置为播放模式
-                }
-                if (audio_service_.IsIdle()){
-                    PlaySound(Lang::Sounds::OGG_RING);
-                }
-                SetAlarmEvent();
-            } else {
-                ClearAlarmEvent();
+                } else {
+                    // 在闹钟状态且音频服务空闲：播放闹钟音乐
+                    ESP_LOGI(TAG, "Alarm ring, playing sound %d", (int)audio_service_.IsIdle());
+                    if (audio_service_.IsIdle()) PlaySound(Lang::Sounds::OGG_RING);
+                }        
             }
         }
     }
@@ -802,19 +809,13 @@ void Application::SetDeviceState(DeviceState state) {
             }
             audio_service_.ResetDecoder();
             break;
-        case kDeviceStateAlarm:
-            display->SetEmotion("neutral");
-            if (listening_mode_ != kListeningModeRealtime) {
-                audio_service_.EnableVoiceProcessing(false);
-                // Only AFE wake word can be detected in speaking mode
-#if CONFIG_USE_AFE_WAKE_WORD
-                audio_service_.EnableWakeWordDetection(true);
-#else
-                audio_service_.EnableWakeWordDetection(false);
-#endif
-            }
-            audio_service_.ResetDecoder();
+        case kDeviceStateAlarm: {
+            ESP_LOGI(TAG, "Before display->SetStatus (alarm)");
+            std::string status = std::string(Lang::Strings::ALARM) + alarm_m_->GetRingName();
+            display->SetStatus(status.c_str());
             break;
+        }
+            
         default:
             // Do nothing
             break;
@@ -907,12 +908,4 @@ void Application::SetAecMode(AecMode mode) {
 
 void Application::PlaySound(const std::string_view& sound) {
     audio_service_.PlaySound(sound);
-}
-
-void Application::SetAlarmEvent(){
-    xEventGroupSetBits(event_group_, ALARM_EVENT);
-}
-
-void Application::ClearAlarmEvent(){
-    xEventGroupClearBits(event_group_, ALARM_EVENT);
 }

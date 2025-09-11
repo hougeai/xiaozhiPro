@@ -50,6 +50,7 @@
         "LOADING_ASSETS": "加载资源...",
         "PLEASE_WAIT": "请稍候...",
         "FOUND_NEW_ASSETS": "发现新资源: %s",
-        "HELLO_MY_FRIEND": "你好，我的朋友！"
+        "HELLO_MY_FRIEND": "你好，我的朋友！",
+        "ALARM": "闹钟："
     }
 }
