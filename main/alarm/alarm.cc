@@ -241,8 +241,8 @@ std::string AlarmManager::DelAlarm(std::string keyword){
     bool found = false;
     for(auto it = alarms_.begin(); it != alarms_.end(); ++it){
         if(it->name.find(keyword) != std::string::npos){
-            alarms_.erase(it);
             ESP_LOGI(TAG, "Alarm %d %s deleted", it->id, it->name.c_str());
+            alarms_.erase(it);
             found = true;
             break;
         }
@@ -277,6 +277,49 @@ std::string AlarmManager::DelAlarm(std::string keyword){
     return "";
 }
 
+std::string AlarmManager::DelAlarmById(int id){
+    std::lock_guard<std::mutex> lock(mutex_);
+    Settings settings_("alarm_clock", true); // 闹钟设置
+
+    if (id < 0) {
+        ESP_LOGI(TAG, "id should be >= 0");
+        return "id should be >= 0";
+    }
+
+    // 从alarms_中删除包含关键词的闹钟
+    bool found = false;
+    for(auto it = alarms_.begin(); it != alarms_.end(); ++it){
+        if(it->id == id){
+            ESP_LOGI(TAG, "Alarm %d %s deleted", it->id, it->name.c_str());
+            it = alarms_.erase(it); // 返回指向被删除元素后一个元素的迭代器
+            found = true;
+            break;
+        }
+    }
+    
+    if(!found){
+        ESP_LOGW(TAG, "Alarm %d not found", id);
+        return "Alarm not found";
+    }
+    
+    // 从设置中删除指定名称的闹钟
+    settings_.SetString("alarm_" + std::to_string(id), "");
+    settings_.SetInt("alarm_time_" + std::to_string(id), 0);
+    settings_.SetInt("alarm_rpt_" + std::to_string(id), 0);
+    settings_.SetInt("alarm_itv_" + std::to_string(id), 0);
+    
+    ESP_LOGI(TAG, "Alarm %d deleted from nvs", id);
+
+    // 重新设置下一个闹钟
+    time_t now = time(NULL);
+    Alarm *current_alarm_ = GetProximateAlarm(now);
+    if (current_alarm_ != nullptr) {
+        CreateAndStartTimer(current_alarm_->time - now);
+    } else {
+        ESP_LOGI(TAG, "No more alarms");
+    }
+    return "";
+}
 
 std::string AlarmManager::QueryAllAlarm(){
     std::lock_guard<std::mutex> lock(mutex_);

@@ -28,6 +28,7 @@ public:
     std::string SetAlarm(int delay, int hour, int minute, int repeat, int interval, std::string name);
     // 删除闹钟
     std::string DelAlarm(std::string keyword);
+    std::string DelAlarmById(int id);
     // 查询所有闹钟
     std::string QueryAllAlarm();
     // 清空所有闹钟

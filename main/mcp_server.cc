@@ -152,13 +152,13 @@ void McpServer::AddCommonTools() {
             }
         });
     AddTool("self.alarm.del",
-        "根据关键词删除其中一个闹钟或提醒，比如：我想删除早餐的闹钟， the keyword should be '早餐'"
+        "根据id删除一个闹钟提醒，首先用self.alarm.queryall查询所有闹钟，然后基于用户意图给出闹钟列表中的一个id，删除前需要和用户确认"
         "Args:\n"
-        "  `keyword`: The keyword of the alarm.\n"
+        "  `id`: The id of the alarm.\n"
         "Return:\n"
         "  A JSON object that indicates whether the alarm is deleted successfully.",
         PropertyList({
-            Property("keyword", kPropertyTypeString)
+            Property("id", kPropertyTypeInteger)
         }),
         [](const PropertyList& properties) -> ReturnValue {
             auto& app = Application::GetInstance();
@@ -167,8 +167,8 @@ void McpServer::AddCommonTools() {
                  return std::string(R"({"success":false,"message":"AlarmManager is not initialized"})");
             }
             ESP_LOGI(TAG, "DelAlarm");
-            std::string keyword = properties["keyword"].value<std::string>();
-            std::string result = app.alarm_m_->DelAlarm(keyword);
+            int id = properties["id"].value<int>();
+            std::string result = app.alarm_m_->DelAlarmById(id);
             if (result.empty()) {
                 return std::string(R"({"success":true,"message":"Alarm delete successfully"})");
             } else {
