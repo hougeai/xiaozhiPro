@@ -592,6 +592,9 @@ void Application::Start() {
         ESP_LOGI(TAG, "Server time not synchronized, alarm manager disabled");
         alarm_m_ = nullptr;
     }
+    // 添加 music 实例
+    music_ = new Esp32Music();
+    ESP_LOGI(TAG, "Music player initialized");
 
 }
 
@@ -653,7 +656,7 @@ void Application::MainEventLoop() {
 
         if (bits & MAIN_EVENT_CLOCK_TICK) {
             clock_ticks_++;
-            ESP_LOGI(TAG, "Clock tick %d", clock_ticks_);
+            // ESP_LOGI(TAG, "Clock tick %d", clock_ticks_);
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
         
@@ -704,6 +707,11 @@ void Application::OnWakeWordDetected() {
     }
 
     if (device_state_ == kDeviceStateIdle) {
+        if (music_) {
+            ESP_LOGI(TAG, "Stopping music streaming due to wake word detected");
+            music_->StopStreaming();
+            audio_service_.ResetDecoder();
+        }
         audio_service_.EncodeWakeWord();
 
         if (!protocol_->IsAudioChannelOpened()) {
@@ -770,6 +778,7 @@ void Application::SetDeviceState(DeviceState state) {
     auto display = board.GetDisplay();
     auto led = board.GetLed();
     led->OnStateChanged();
+
     switch (state) {
         case kDeviceStateUnknown:
         case kDeviceStateIdle:
@@ -909,3 +918,4 @@ void Application::SetAecMode(AecMode mode) {
 void Application::PlaySound(const std::string_view& sound) {
     audio_service_.PlaySound(sound);
 }
+

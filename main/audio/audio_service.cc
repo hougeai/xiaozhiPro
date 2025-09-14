@@ -294,6 +294,7 @@ void AudioService::AudioOutputTask() {
             codec_->EnableOutput(true);
         }
         codec_->OutputData(task->pcm);
+        current_play_timestamp_ = task->timestamp;
 
         /* Update the last output time */
         last_output_time_ = std::chrono::steady_clock::now();
@@ -670,4 +671,15 @@ void AudioService::CheckAndUpdateAudioPowerState() {
 
 void AudioService::SetModelsList(srmodel_list_t* models_list) {
     models_list_ = models_list;
+}
+
+void AudioService::PlayExternalPcmData(std::vector<int16_t>&& pcm_data, uint32_t timestamp) {
+    auto task = std::make_unique<AudioTask>();
+    task->type = kAudioTaskTypeDecodeToPlaybackQueue;
+    task->pcm = std::move(pcm_data);
+    task->timestamp = timestamp;
+    
+    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+    audio_playback_queue_.push_back(std::move(task));
+    audio_queue_cv_.notify_all();
 }

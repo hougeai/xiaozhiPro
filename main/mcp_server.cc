@@ -271,6 +271,33 @@ void McpServer::AddCommonTools() {
             cJSON_Delete(result);
             return result_str;
         });
+    // music
+    AddTool("self.online_music.play",
+        "当用户要求播放音乐时使用此工具，会自动获取歌曲详情并开始流式播放。\n"
+        "参数:\n"
+        "  `song_name`: 要播放的歌曲名称（必需）。\n"
+        "  `singer`: 歌手名称（可选，默认为空字符串）。\n"
+        "返回:\n"
+        "  播放状态信息。",
+        PropertyList({
+            Property("song_name", kPropertyTypeString),
+            Property("singer", kPropertyTypeString, "")
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto& app = Application::GetInstance();
+            if(app.music_ == nullptr){
+                ESP_LOGE(TAG, "MusicManager is nullptr");
+                 return std::string(R"({"success":false,"message":"MusicManager is not initialized"})");
+            }
+            auto song_name = properties["song_name"].value<std::string>();
+            auto singer = properties["singer"].value<std::string>();
+            ESP_LOGI(TAG, "Playing music: %s %s", song_name.c_str(), singer.c_str());
+            
+            if (!app.music_->Download(song_name, singer)) {
+                return "{\"success\": false, \"message\": \"获取音乐资源失败\"}";
+            }
+            return "{\"success\": true, \"message\": \"音乐开始播放\"}";
+        });
     // Restore the original tools list to the end of the tools list
     tools_.insert(tools_.end(), original_tools.begin(), original_tools.end());
 }

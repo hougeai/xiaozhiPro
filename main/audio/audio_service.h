@@ -108,6 +108,10 @@ public:
     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
     void ResetDecoder();
     void SetModelsList(srmodel_list_t* models_list);
+    // 添加处理外部PCM数据的方法
+    void PlayExternalPcmData(std::vector<int16_t>&& pcm_data, uint32_t timestamp = 0);
+
+    uint64_t GetCurrentPlayTimestamp() const { return current_play_timestamp_.load(); }
 
 private:
     AudioCodec* codec_ = nullptr;
@@ -155,6 +159,8 @@ private:
     void PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t>&& pcm);
     void SetDecodeSampleRate(int sample_rate, int frame_duration);
     void CheckAndUpdateAudioPowerState();
+
+    std::atomic<uint64_t> current_play_timestamp_{0};
 };
 
 #endif

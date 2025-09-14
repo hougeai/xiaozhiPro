@@ -16,6 +16,7 @@
 #include "audio_service.h"
 #include "device_state_event.h"
 #include "alarm.h"
+#include "esp32_music.h"
 
 #define MAIN_EVENT_SCHEDULE (1 << 0)
 #define MAIN_EVENT_SEND_AUDIO (1 << 1)
@@ -61,10 +62,12 @@ public:
     AecMode GetAecMode() const { return aec_mode_; }
     void PlaySound(const std::string_view& sound);
     AudioService& GetAudioService() { return audio_service_; }
+    Protocol* GetProtocol() { return protocol_.get(); }  // 添加获取协议实例的方法
     // alarm
     AlarmManager* alarm_m_ = nullptr;
-    void SetAlarmEvent();
-    void ClearAlarmEvent();
+    // music
+    Esp32Music* music_ = nullptr;
+
 private:
     Application();
     ~Application();
