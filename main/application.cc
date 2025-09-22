@@ -503,6 +503,7 @@ void Application::Start() {
                             SetDeviceState(kDeviceStateListening);
                         }
                     }
+                    AddConversationToQueue();
                 });
             } else if (strcmp(state->valuestring, "sentence_start") == 0) {
                 auto text = cJSON_GetObjectItem(root, "text");
@@ -511,6 +512,7 @@ void Application::Start() {
                     Schedule([this, display, message = std::string(text->valuestring)]() {
                         display->SetChatMessage("assistant", message.c_str());
                     });
+                    current_tts_text_ += std::string(text->valuestring) + " ";
                 }
             }
         } else if (strcmp(type->valuestring, "stt") == 0) {
@@ -520,6 +522,7 @@ void Application::Start() {
                 Schedule([this, display, message = std::string(text->valuestring)]() {
                     display->SetChatMessage("user", message.c_str());
                 });
+                current_stt_text_ += std::string(text->valuestring) + " ";
             }
         } else if (strcmp(type->valuestring, "llm") == 0) {
             auto emotion = cJSON_GetObjectItem(root, "emotion");
@@ -786,6 +789,7 @@ void Application::SetDeviceState(DeviceState state) {
             display->SetEmotion("neutral");
             audio_service_.EnableVoiceProcessing(false);
             audio_service_.EnableWakeWordDetection(true);
+            FlushConversationQueue();
             break;
         case kDeviceStateConnecting:
             display->SetStatus(Lang::Strings::CONNECTING);
@@ -919,3 +923,63 @@ void Application::PlaySound(const std::string_view& sound) {
     audio_service_.PlaySound(sound);
 }
 
+void Application::AddConversationToQueue() {
+    if (!current_stt_text_.empty() && !current_tts_text_.empty()) {
+        conversation_queue_.push_back({
+            current_stt_text_, 
+            current_tts_text_
+        });
+        // 清理当前对话数据
+        current_stt_text_.clear();
+        current_tts_text_.clear();
+        // 检查是否需要立即发送
+        if (conversation_queue_.size() >= max_queue_size_) {
+            FlushConversationQueue();
+        }
+    }
+}
+
+void Application::FlushConversationQueue() {
+    if (conversation_queue_.empty()) {
+        return;
+    }
+    Schedule([temp_queue = std::move(conversation_queue_)]() {
+        ESP_LOGI(TAG, "Flushing %d conversations to server", temp_queue.size());
+        // 创建HTTP客户端
+        auto http = Board::GetInstance().GetNetwork()->CreateHttp(2);
+        std::string server_url = "https://ybakxm--3002.app.cloudstudio.work/upload_conversations";
+        http->SetHeader("Content-Type", "application/json");
+        http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
+        // 构造包含多个对话的JSON数组
+        cJSON* root = cJSON_CreateObject();
+        cJSON* conversation = cJSON_CreateArray();
+        
+        for (const auto& record : temp_queue) {
+            cJSON* conv = cJSON_CreateObject();
+            cJSON_AddStringToObject(conv, "stt", record.stt.c_str());
+            cJSON_AddStringToObject(conv, "tts", record.tts.c_str());
+            cJSON_AddItemToArray(conversation, conv);
+        }        
+        cJSON_AddItemToObject(root, "conversation", conversation);
+
+        char* json_str = cJSON_PrintUnformatted(root);
+        std::string data(json_str);
+        cJSON_free(json_str); // 释放JSON字符串内存
+        cJSON_Delete(root);  // 释放JSON对象内存，会递归释放所有子对象
+        
+        http->SetContent(std::move(data));
+        
+        // 发送请求
+        if (!http->Open("POST", server_url)) {
+            ESP_LOGE(TAG, "Failed to connect to conversation server");
+        }
+        auto status_code = http->GetStatusCode();
+        if (status_code == 200) {
+            ESP_LOGI(TAG, "Successfully sent %d conversations to server", temp_queue.size());
+        } else {
+            ESP_LOGE(TAG, "Failed to send conversations to server, status code: %d", status_code);
+        }
+        // temp_queue.clear();  // 不需要清空，lambda局部变量 执行完毕会自动释放
+        http->Close();
+    });
+}

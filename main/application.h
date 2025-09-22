@@ -26,6 +26,11 @@
 #define MAIN_EVENT_CHECK_NEW_VERSION_DONE (1 << 5)
 #define MAIN_EVENT_CLOCK_TICK (1 << 6)
 
+struct ConversationRecord {
+    std::string stt;
+    std::string tts;
+};
+
 enum AecMode {
     kAecOff,
     kAecOnDeviceSide,
@@ -95,6 +100,13 @@ private:
     void SetListeningMode(ListeningMode mode);
     
     bool alarm_triggered_ = false;
+    // 对话记录上传相关
+    std::string current_stt_text_;     // 当前轮次的用户输入
+    std::string current_tts_text_;     // 当前轮次的助手回复
+    std::vector<ConversationRecord> conversation_queue_;
+    static const size_t max_queue_size_ = 50; // 最大对话队列长度，50条：75KB
+    void AddConversationToQueue();
+    void FlushConversationQueue();
 };
 
 #endif // _APPLICATION_H_
