@@ -134,7 +134,7 @@ void McpServer::AddCommonTools() {
             auto& app = Application::GetInstance();
             if(app.alarm_m_ == nullptr){
                 ESP_LOGE(TAG, "AlarmManager is nullptr");
-                 return std::string(R"({"success":false,"message":"AlarmManager is not initialized"})");
+                 return R"({"success":false,"message":"AlarmManager is not initialized"})";
             }
             ESP_LOGI(TAG, "SetAlarm");
             int delay = properties["delay"].value<int>();
@@ -146,7 +146,7 @@ void McpServer::AddCommonTools() {
             ESP_LOGI(TAG, "SetAlarm delay %d hour %d minute %d repeat %d interval %d name %s", delay, hour, minute, repeat, interval, name.c_str());
             std::string result = app.alarm_m_->SetAlarm(delay, hour, minute, repeat, interval, name);
             if (result.empty()) {
-                return std::string(R"({"success":true,"message":"Alarm set successfully"})");
+                return R"({"success":true,"message":"Alarm set successfully"})";
             } else {
                 return std::string(R"({"success":false,"message":")" + result + R"("})");
             }
@@ -164,13 +164,13 @@ void McpServer::AddCommonTools() {
             auto& app = Application::GetInstance();
             if(app.alarm_m_ == nullptr){
                 ESP_LOGE(TAG, "AlarmManager is nullptr");
-                 return std::string(R"({"success":false,"message":"AlarmManager is not initialized"})");
+                 return R"({"success":false,"message":"AlarmManager is not initialized"})";
             }
             ESP_LOGI(TAG, "DelAlarm");
             int id = properties["id"].value<int>();
             std::string result = app.alarm_m_->DelAlarmById(id);
             if (result.empty()) {
-                return std::string(R"({"success":true,"message":"Alarm delete successfully"})");
+                return R"({"success":true,"message":"Alarm delete successfully"})";
             } else {
                 return std::string(R"({"success":false,"message":")" + result + R"("})");
             }
@@ -182,11 +182,11 @@ void McpServer::AddCommonTools() {
             auto& app = Application::GetInstance();
             if(app.alarm_m_ == nullptr){
                 ESP_LOGE(TAG, "AlarmManager is nullptr");
-                 return std::string(R"({"success":false,"message":"AlarmManager is not initialized"})");
+                 return R"({"success":false,"message":"AlarmManager is not initialized"})";
             }
             ESP_LOGI(TAG, "CleanUp Alarm");
             app.alarm_m_->CleanUpAlarm();
-            return std::string(R"({"success":true,"message":"Alarm cleaned up successfully"})");
+            return R"({"success":true,"message":"Alarm cleaned up successfully"})";
         });
     AddTool("self.alarm.queryall",
         "查询所有的提醒和闹钟",
@@ -195,7 +195,7 @@ void McpServer::AddCommonTools() {
             auto& app = Application::GetInstance();
             if(app.alarm_m_ == nullptr){
                 ESP_LOGE(TAG, "AlarmManager is nullptr");
-                 return std::string(R"({"success":false,"message":"AlarmManager is not initialized"})");
+                 return R"({"success":false,"message":"AlarmManager is not initialized"})";
             }
             ESP_LOGI(TAG, "Query All Alarm");
             std::string alarm_list = app.alarm_m_->QueryAllAlarm();
@@ -210,7 +210,7 @@ void McpServer::AddCommonTools() {
             Property("query", kPropertyTypeString)
         }),
         [](const PropertyList& properties) -> ReturnValue {
-            auto http = Board::GetInstance().GetNetwork()->CreateHttp(3);
+            auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
             http->SetHeader("Content-Type", "application/json");
             http->SetHeader("X-API-Key", "sk-Xea7HELObS3gYurLAgC-nepXSZdT6m3CwkV6nYqSxePRzdTa");
             // 构造请求的JSON数据
@@ -226,12 +226,12 @@ void McpServer::AddCommonTools() {
             http->SetContent(std::move(data));
             if (!http->Open("GET", "http://106.55.224.164:3008/api/v1/knowledge-bases/kb-00000001/hybrid-search")) {
                 ESP_LOGE(TAG, "Failed to open HTTP connection");
-                return std::string(R"({"success":false,"message":"Failed to connect to knowledge base"})");
+                return R"({"success":false,"message":"Failed to connect to knowledge base"})";
             }
             auto status_code = http->GetStatusCode();
             if (status_code != 200) {
                 ESP_LOGE(TAG, "Knowledge base request failed with status code: %d", status_code);
-                return std::string(R"({"success":false,"message":"Knowledge base request failed"})");
+                return R"({"success":false,"message":"Knowledge base request failed"})";
             }
             std::string response = http->ReadAll();
             http->Close();
@@ -239,14 +239,14 @@ void McpServer::AddCommonTools() {
             cJSON* root = cJSON_Parse(response.c_str());
             if (root == nullptr) {
                 ESP_LOGE(TAG, "Failed to parse knowledge base response");
-                return std::string(R"({"success":false,"message":"Failed to parse knowledge base response"})");
+                return R"({"success":false,"message":"Failed to parse knowledge base response"})";
             }
             
             cJSON* data_array = cJSON_GetObjectItem(root, "data");
             if (!cJSON_IsArray(data_array)) {
                 cJSON_Delete(root);
                 ESP_LOGE(TAG, "Invalid data format in knowledge base response");
-                return std::string(R"({"success":false,"message":"Invalid data format in knowledge base response"})");
+                return R"({"success":false,"message":"Invalid data format in knowledge base response"})";
             }
             // 创建只包含content字段的简单数组
             cJSON* content_array = cJSON_CreateArray();
@@ -287,7 +287,7 @@ void McpServer::AddCommonTools() {
             auto& app = Application::GetInstance();
             if(app.music_ == nullptr){
                 ESP_LOGE(TAG, "MusicManager is nullptr");
-                 return std::string(R"({"success":false,"message":"MusicManager is not initialized"})");
+                 return R"({"success":false,"message":"MusicManager is not initialized"})";
             }
             auto song_name = properties["song_name"].value<std::string>();
             auto singer = properties["singer"].value<std::string>();
@@ -298,6 +298,45 @@ void McpServer::AddCommonTools() {
             }
             return "{\"success\": true, \"message\": \"音乐开始播放\"}";
         });
+    // sys
+    AddTool("self.sys.get_verification_code",
+        "当用户要求查询设备验证码时使用此工具，返回验证码。\n",
+        PropertyList(),
+        [&board](const PropertyList& properties) -> ReturnValue {
+            auto http = board.GetNetwork()->CreateHttp(1); // 1 是connect_id
+            http->SetHeader("Content-Type", "application/json");
+            std::string data = board.GetSystemInfoJson();
+            http->SetContent(std::move(data));
+            if (!http->Open("POST", "https://ybakxm--3002.app.cloudstudio.work/get_code")) {
+                ESP_LOGE(TAG, "Failed to open HTTP connection");
+                return R"({"success":false,"message":"Failed to connect to the server"})";
+            }
+            auto status_code = http->GetStatusCode();
+            if (status_code != 200) {
+                ESP_LOGE(TAG, "request failed with status code: %d", status_code);
+                return R"({"success":false,"message":"request failed"})";
+            }
+            data = http->ReadAll();
+            http->Close();
+            ESP_LOGI(TAG, "Received code response: %s", data.c_str());
+            // 解析响应并提取需要的数据
+            cJSON* root = cJSON_Parse(data.c_str());
+            if (root == nullptr) {
+                ESP_LOGE(TAG, "Failed to parse response");
+                return R"({"success":false,"message":"Failed to parse response"})";
+            }
+            cJSON* code = cJSON_GetObjectItem(root, "code");
+            std::string result;
+            if (cJSON_IsString(code)) {
+                std::string code_str = code->valuestring;
+                result = std::string(R"({"success":true,"message":")" + code_str + R"("})"); // 涉及字符串拼接，需要使用std::string
+            } else {
+                result = R"({"success": false, "message": "获取验证码失败"})";
+            }
+            cJSON_Delete(root); // 会递归释放一个 JSON 对象及其所有子对象
+            return result;
+        });
+    
     // Restore the original tools list to the end of the tools list
     tools_.insert(tools_.end(), original_tools.begin(), original_tools.end());
 }
