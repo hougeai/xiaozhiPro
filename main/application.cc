@@ -943,7 +943,10 @@ void Application::FlushConversationQueue() {
     if (conversation_queue_.empty()) {
         return;
     }
-    Schedule([temp_queue = std::move(conversation_queue_)]() {
+    Schedule([this, temp_queue = std::move(conversation_queue_)]() {
+        // 清理当前对话数据
+        this->current_stt_text_.clear();
+        this->current_tts_text_.clear();
         ESP_LOGI(TAG, "Flushing %d conversations to server", temp_queue.size());
         // 创建HTTP客户端
         auto http = Board::GetInstance().GetNetwork()->CreateHttp(2);
