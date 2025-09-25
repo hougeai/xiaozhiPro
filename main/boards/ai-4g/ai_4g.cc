@@ -9,7 +9,6 @@
 
 #include <esp_log.h>
 #include <driver/i2c_master.h>
-#include <driver/spi_common.h>
 #include <wifi_station.h>
 
 #define TAG "AI4gBoard"
@@ -58,17 +57,6 @@ private:
         };
 
         ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_bus_cfg, &i2c_bus_));
-    }
-
-    void InitializeSpi() {
-        spi_bus_config_t buscfg = {};
-        buscfg.mosi_io_num = GPIO_NUM_40;
-        buscfg.miso_io_num = GPIO_NUM_NC;
-        buscfg.sclk_io_num = GPIO_NUM_41;
-        buscfg.quadwp_io_num = GPIO_NUM_NC;
-        buscfg.quadhd_io_num = GPIO_NUM_NC;
-        buscfg.max_transfer_sz = 2048;
-        ESP_ERROR_CHECK(spi_bus_initialize(SPI3_HOST, &buscfg, SPI_DMA_CH_AUTO));
     }
 
     void InitializeButtons() {
@@ -140,7 +128,6 @@ public:
         volume_up_button_(VOLUME_UP_BUTTON_GPIO),
         volume_down_button_(VOLUME_DOWN_BUTTON_GPIO) {
         InitializeI2c();
-        InitializeSpi();
         InitializeButtons();
         ESP_LOGI(TAG, "Initialized AI4gBoard");
     }

@@ -1,8 +1,4 @@
 #include "alarm.h"
-#include "assets/lang_config.h"
-#include "board.h"
-#include "display.h"
-#include "application.h"
 #include <ctime>
 #define TAG "AlarmManager"
 
