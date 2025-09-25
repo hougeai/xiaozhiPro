@@ -500,6 +500,8 @@ elseif(CONFIG_BOARD_TYPE_YUNLIAO_S3)
     set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
     set(BUILTIN_ICON_FONT font_awesome_20_4)
     set(DEFAULT_EMOJI_COLLECTION twemoji_64)
+elseif(CONFIG_BOARD_TYPE_AI_4G)
+    set(BOARD_TYPE "ai-4g")
 endif()
 
 file(GLOB BOARD_SOURCES
