@@ -973,7 +973,6 @@ void Application::FlushConversationQueue() {
         ESP_LOGI(TAG, "Flushing %d conversations to server", temp_queue.size());
         // 创建HTTP客户端
         auto http = Board::GetInstance().GetNetwork()->CreateHttp(2);
-        std::string server_url = "https://ybakxm--3002.app.cloudstudio.work/upload_conversations";
         http->SetHeader("Content-Type", "application/json");
         http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
         // 构造包含多个对话的JSON数组
@@ -996,7 +995,7 @@ void Application::FlushConversationQueue() {
         http->SetContent(std::move(data));
         
         // 发送请求
-        if (!http->Open("POST", server_url)) {
+        if (!http->Open("POST", std::string(CONFIG_SERVER_URL) + "/upload_conversations")) {
             ESP_LOGE(TAG, "Failed to connect to conversation server");
         }
         auto status_code = http->GetStatusCode();

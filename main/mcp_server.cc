@@ -197,7 +197,10 @@ void McpServer::AddCommonTools() {
                  return R"({"success":false,"message":"AlarmManager is not initialized"})";
             }
             ESP_LOGI(TAG, "CleanUp Alarm");
-            app.alarm_m_->CleanUpAlarm();
+            std::string result = app.alarm_m_->CleanUpAlarm();
+            if (!result.empty()) {
+                return std::string(R"({"success":false,"message":")" + result + R"("})");
+            }
             return R"({"success":true,"message":"Alarm cleaned up successfully"})";
         });
     AddTool("self.alarm.queryall",
@@ -319,7 +322,7 @@ void McpServer::AddCommonTools() {
             http->SetHeader("Content-Type", "application/json");
             std::string data = board.GetSystemInfoJson();
             http->SetContent(std::move(data));
-            if (!http->Open("POST", "https://ybakxm--3002.app.cloudstudio.work/get_code")) {
+            if (!http->Open("POST", std::string(CONFIG_SERVER_URL) + "/get_code")) {
                 ESP_LOGE(TAG, "Failed to open HTTP connection");
                 return R"({"success":false,"message":"Failed to connect to the server"})";
             }

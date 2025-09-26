@@ -74,19 +74,6 @@ private:
                 SwitchNetworkType();
             }
         });
-        // 长按重置 wifi
-        boot_button_.OnLongPress([this]() {
-            ESP_LOGI(TAG, "Boot button long clicked, reset wifi");
-            auto& app = Application::GetInstance();
-            if (GetNetworkType() == NetworkType::WIFI) {
-                if (app.GetDeviceState() == kDeviceStateStarting && !WifiStation::GetInstance().IsConnected()) {
-                    // cast to WifiBoard
-                    auto& wifi_board = static_cast<WifiBoard&>(GetCurrentBoard());
-                    wifi_board.ResetWifiConfiguration();
-                }
-            }
-            app.ToggleChatState();
-        });
 
         volume_up_button_.OnClick([this]() {
             ESP_LOGI(TAG, "Volume up button clicked");

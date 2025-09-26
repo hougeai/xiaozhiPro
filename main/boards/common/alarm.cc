@@ -1,5 +1,8 @@
 #include "alarm.h"
 #include <ctime>
+#include <cJSON.h>
+#include "board.h"
+#include "system_info.h"
 #define TAG "AlarmManager"
 
 std::string FormatTimestamp(time_t timestamp) {
@@ -15,6 +18,8 @@ AlarmManager::AlarmManager(){
     ring_flag_ = false;
     ring_name_ = "alarm";
     timer_ = nullptr; // 初始为空
+    server_url_ = std::string(CONFIG_SERVER_URL) + "/device_alarm";
+    max_alarms_ = 10;
 
     esp_timer_create_args_t timer_args = {
         .callback = [](void* arg) {
@@ -28,21 +33,26 @@ AlarmManager::AlarmManager(){
     ESP_ERROR_CHECK(esp_timer_create(&timer_args, &timer_));
 
     Settings settings_("alarm_clock", true); // 闹钟设置
-    // 从Setting里面读取闹钟列表
-    for(int i = 0; i < 10; i++){
-        std::string alarm_name = settings_.GetString("alarm_" + std::to_string(i));
-        if(alarm_name != ""){
-            Alarm alarm;
-            alarm.id = i; // 闹钟的索引
-            alarm.name = alarm_name;
-            alarm.time = settings_.GetInt("alarm_time_" + std::to_string(i));
-            alarm.repeat = settings_.GetInt("alarm_rpt_" + std::to_string(i));
-            alarm.interval = settings_.GetInt("alarm_itv_" + std::to_string(i));
-            alarms_.push_back(alarm);
-            ESP_LOGI(TAG, "Alarm %d %s add again at %s", alarm.id, alarm.name.c_str(), FormatTimestamp(alarm.time).c_str());
+    
+    // 先从云端获取闹钟列表，失败则从Setting里面读取闹钟列表
+    std::string sync_result = SyncAlarmFromCloud();
+    if (!sync_result.empty()) {
+        ESP_LOGW(TAG, "Failed to sync alarms from cloud: %s, loading from local settings", sync_result.c_str());
+        for(int i = 0; i < max_alarms_; i++){
+            std::string alarm_name = settings_.GetString("alarm_" + std::to_string(i));
+            if(alarm_name != ""){
+                Alarm alarm;
+                alarm.id = i; // 闹钟的索引
+                alarm.name = alarm_name;
+                alarm.time = settings_.GetInt("alarm_time_" + std::to_string(i));
+                alarm.repeat = settings_.GetInt("alarm_rpt_" + std::to_string(i));
+                alarm.interval = settings_.GetInt("alarm_itv_" + std::to_string(i));
+                alarms_.push_back(alarm);
+                ESP_LOGI(TAG, "Alarm %d %s add again at %s", alarm.id, alarm.name.c_str(), FormatTimestamp(alarm.time).c_str());
+            }
         }
     }
-
+    
     time_t now = time(NULL);
     // 清除过期的闹钟
     ClearOverdueAlarm(now);
@@ -126,7 +136,7 @@ void AlarmManager::ClearOverdueAlarm(time_t now){
         }
         // 到期处理：在 0-9 范围内寻找
         bool found = false;
-        for (int i = 0; i < 10; i++){
+        for (int i = 0; i < max_alarms_; i++){
             if(settings_.GetString("alarm_" + std::to_string(i)) == it->name && settings_.GetInt("alarm_time_" + std::to_string(i)) == it->time){
                 found = true;
                 it->repeat--; // 次数减去1
@@ -134,14 +144,16 @@ void AlarmManager::ClearOverdueAlarm(time_t now){
                     it->time += it->interval;
                     settings_.SetInt("alarm_time_" + std::to_string(i), it->time);
                     settings_.SetInt("alarm_rpt_" + std::to_string(i), it->repeat);
-                    ESP_LOGI(TAG, "Alarm %s will repeat %d ", it->name.c_str(), it->repeat);
+                    std::string result = SyncAlarmToCloud(std::vector<Alarm>(1, *it), "update");
+                    ESP_LOGI(TAG, "Alarm %s will repeat %d, sync to cloud: %s", it->name.c_str(), it->repeat, result.c_str());
                     ++it;
                 } else {
                     settings_.SetString("alarm_" + std::to_string(i), ""); // 名称置为空
                     settings_.SetInt("alarm_time_" + std::to_string(i), 0);
                     settings_.SetInt("alarm_rpt_" + std::to_string(i), 0);
                     settings_.SetInt("alarm_itv_" + std::to_string(i), 0);
-                    ESP_LOGI(TAG, "Alarm %s is overdue, repeat %d", it->name.c_str(), it->repeat);
+                    std::string result = SyncAlarmToCloud(std::vector<Alarm>(1, *it), "delete");
+                    ESP_LOGI(TAG, "Alarm %s is overdue, repeat %d, sync to cloud: %s", it->name.c_str(), it->repeat, result.c_str());
                     it = alarms_.erase(it); // 删除过期的闹钟, 此时it指向下一个元素
                 }
                 break; // 命中，跳出for循环
@@ -161,10 +173,6 @@ void AlarmManager::ClearOverdueAlarm(time_t now){
 
 std::string AlarmManager::SetAlarm(int delay, int hour, int minute, int repeat, int interval, std::string name){
     std::lock_guard<std::mutex> lock(mutex_);
-    if(alarms_.size() >= 10){
-        ESP_LOGI(TAG, "Too many alarms");
-        return "Too many alarms";
-    }
     Settings settings_("alarm_clock", true); // 闹钟设置
     // 开始设置新闹钟
     Alarm alarm{}; // 一个新的闹钟，全部初始化为0，Alarm alarm则不会初始化，会拿到一个随机值
@@ -193,21 +201,28 @@ std::string AlarmManager::SetAlarm(int delay, int hour, int minute, int repeat, 
     alarm.repeat = repeat;
     alarm.interval = interval;
     // 从设置里面找到第一个空闲的闹钟, 记录新的闹钟
-    for(int i = 0; i < 10; i++){
+    for (int i = 0; i < max_alarms_; i++) {
         if(settings_.GetString("alarm_" + std::to_string(i)) == ""){
             alarm.id = i; // 将索引赋值给闹钟的id
-            settings_.SetString("alarm_" + std::to_string(i), alarm.name);
-            settings_.SetInt("alarm_time_" + std::to_string(i), alarm.time);
-            settings_.SetInt("alarm_rpt_" + std::to_string(i), repeat);
-            settings_.SetInt("alarm_itv_" + std::to_string(i), interval);
             break;
         }
     }
+    // 1.先同步到云端，失败则返回
+    std::string result = SyncAlarmToCloud(std::vector<Alarm>(1, alarm), "add");
+    if (!result.empty()) {
+        ESP_LOGI(TAG, "Alarm %s sync to cloud: %s", alarm.name.c_str(), result.c_str());
+        return result;
+    }
+    // 2.保存到nvs
+    settings_.SetString("alarm_" + std::to_string(alarm.id), alarm.name);
+    settings_.SetInt("alarm_time_" + std::to_string(alarm.id), alarm.time);
+    settings_.SetInt("alarm_rpt_" + std::to_string(alarm.id), repeat);
+    settings_.SetInt("alarm_itv_" + std::to_string(alarm.id), interval);
     alarms_.push_back(alarm); // 全部赋值后再push_back
     ESP_LOGI(TAG, "Alarm %d %s set at %s repeat %d interval %d", alarm.id, alarm.name.c_str(), FormatTimestamp(alarm.time).c_str(), alarm.repeat, alarm.interval);
     // 打印所有闹钟设置用于调试
     ESP_LOGI(TAG, "=== Alarm Settings Debug Info ===");
-    for(int i = 0; i < 10; i++){
+    for(int i = 0; i < max_alarms_; i++){
         std::string name = settings_.GetString("alarm_" + std::to_string(i));
         int time = settings_.GetInt("alarm_time_" + std::to_string(i));
         int repeat = settings_.GetInt("alarm_rpt_" + std::to_string(i));
@@ -216,6 +231,7 @@ std::string AlarmManager::SetAlarm(int delay, int hour, int minute, int repeat, 
             ESP_LOGI(TAG, "Alarm %d: name=%s, time=%d, repeat=%d, interval=%d", i, name.c_str(), time, repeat, interval);
         }
     }
+    // 获取下一个要启动的闹钟
     Alarm *alarm_first = GetProximateAlarm(now);
     if (alarm_first != nullptr) {
         ESP_LOGI(TAG, "Next Alarm %d %s set at %s repeat %d interval %d", alarm_first->id, alarm_first->name.c_str(), FormatTimestamp(alarm_first->time).c_str(), alarm_first->repeat, alarm_first->interval);
@@ -250,7 +266,7 @@ std::string AlarmManager::DelAlarm(std::string keyword){
     }
     
     // 从设置中删除指定名称的闹钟
-    for(int i = 0; i < 10; i++){
+    for(int i = 0; i < max_alarms_; i++){
         if(settings_.GetString("alarm_" + std::to_string(i)).find(keyword) != std::string::npos){
             settings_.SetString("alarm_" + std::to_string(i), "");
             settings_.SetInt("alarm_time_" + std::to_string(i), 0);
@@ -282,11 +298,15 @@ std::string AlarmManager::DelAlarmById(int id){
         return "id should be >= 0";
     }
 
-    // 从alarms_中删除包含关键词的闹钟
+    // 从alarms_中删除闹钟
     bool found = false;
     for(auto it = alarms_.begin(); it != alarms_.end(); ++it){
         if(it->id == id){
             ESP_LOGI(TAG, "Alarm %d %s deleted", it->id, it->name.c_str());
+            std::string result = SyncAlarmToCloud(std::vector<Alarm>(1, *it), "delete");
+            if (!result.empty()) {
+                return result;
+            }
             it = alarms_.erase(it); // 返回指向被删除元素后一个元素的迭代器
             found = true;
             break;
@@ -329,7 +349,7 @@ std::string AlarmManager::QueryAllAlarm(){
         result += R"({)";
         result += R"("id":)" + std::to_string(alarm.id) + R"(,)";
         result += R"("name":")" + alarm.name + R"(",)";
-        result += R"("time":)" + FormatTimestamp(alarm.time) + R"(,)";
+        result += R"("time":")" + FormatTimestamp(alarm.time) + R"(",)";
         result += R"("repeat":)" + std::to_string(alarm.repeat) + R"(,)";
         result += R"("interval":)" + std::to_string(alarm.interval);
         result += R"(})";
@@ -343,13 +363,17 @@ void AlarmManager::ClearRing(){
     ring_flag_ = false;
 };
 
-void AlarmManager::CleanUpAlarm() {
+std::string AlarmManager::CleanUpAlarm() {
     std::lock_guard<std::mutex> lock(mutex_);
     Settings settings_("alarm_clock", true); // 闹钟设置
-    // 清空所有闹钟
+    // 清空所有闹钟：先清除云端的，再清除本地的
+    std::string result = SyncAlarmToCloud(alarms_, "delete");
+    if (!result.empty()) {
+        return result;
+    }
     alarms_.clear();
     // 清空所有设置
-    for(int i = 0; i < 10; i++){
+    for(int i = 0; i < max_alarms_; i++){
         settings_.SetString("alarm_" + std::to_string(i), "");
         settings_.SetInt("alarm_time_" + std::to_string(i), 0);
         settings_.SetInt("alarm_rpt_" + std::to_string(i), 0);
@@ -358,4 +382,134 @@ void AlarmManager::CleanUpAlarm() {
     // 停止当前定时器
     esp_timer_stop(timer_);
     ESP_LOGI(TAG, "All alarms cleaned up");
+    return "";
+}
+
+std::string AlarmManager::SyncAlarmToCloud(const std::vector<Alarm>& alarms, const std::string& action) {
+    // 创建HTTP客户端
+    auto http = Board::GetInstance().GetNetwork()->CreateHttp();
+    
+    http->SetHeader("Content-Type", "application/json");
+    http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
+    
+    // 构造JSON数据
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "action", action.c_str()); // "add", "delete", "update"
+
+    cJSON* alarms_array = cJSON_CreateArray();
+    for (const auto& alarm : alarms) {
+        cJSON* alarm_obj = cJSON_CreateObject();
+        cJSON_AddNumberToObject(alarm_obj, "nvs_id", alarm.id);
+        cJSON_AddNumberToObject(alarm_obj, "time", alarm.time);
+        cJSON_AddNumberToObject(alarm_obj, "repeat", alarm.repeat);
+        cJSON_AddNumberToObject(alarm_obj, "interval", alarm.interval);
+        cJSON_AddStringToObject(alarm_obj, "name", alarm.name.c_str());
+        cJSON_AddItemToArray(alarms_array, alarm_obj);
+    }
+    cJSON_AddItemToObject(root, "alarms", alarms_array);
+
+    char* json_str = cJSON_PrintUnformatted(root);
+    std::string data(json_str);
+    cJSON_free(json_str);
+    cJSON_Delete(root);
+    
+    http->SetContent(std::move(data));
+    
+    // 发送请求
+    if (!http->Open("POST", server_url_.c_str())) {
+        ESP_LOGE(TAG, "Failed to connect to alarm sync server");
+        http->Close();
+        return "Failed to connect to alarm sync server";
+    }
+    
+    int status_code = http->GetStatusCode();
+    std::string response = http->ReadAll();
+    http->Close();
+    if (status_code != 200) {
+        cJSON* root = cJSON_Parse(response.c_str());
+        if (root) {
+            cJSON* msg = cJSON_GetObjectItem(root, "msg");
+            std::string error_msg = msg ? msg->valuestring : "Unknown error";
+            cJSON_Delete(root);
+            return error_msg;  // 返回具体错误信息，如 "Device not found"
+        }
+        return "Failed to sync alarms to cloud";
+    }
+    ESP_LOGI(TAG, "Successfully synced %d alarms to cloud, action: %s", alarms.size(), action.c_str());
+    return "";
+}
+
+std::string AlarmManager::SyncAlarmFromCloud() {
+    // 创建HTTP客户端
+    auto http = Board::GetInstance().GetNetwork()->CreateHttp();
+    
+    http->SetHeader("Content-Type", "application/json");
+    http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
+    
+    // 发送GET请求
+    if (!http->Open("GET", server_url_.c_str())) {
+        ESP_LOGE(TAG, "Failed to connect to alarm sync server");
+        http->Close();
+        return "Failed to connect to alarm sync server";
+    }
+    
+    int status_code = http->GetStatusCode();
+    std::string response = http->ReadAll();
+    cJSON* root = cJSON_Parse(response.c_str());
+    http->Close();
+    if (status_code != 200) {
+        ESP_LOGE(TAG, "Failed to fetch alarms from cloud, status code: %d", status_code);
+        if (root) {
+            cJSON *msg = cJSON_GetObjectItem(root, "msg");
+            std::string error_msg = msg ? msg->valuestring : "Unknown error"; 
+            cJSON_Delete(root);
+            return error_msg; //返回具体错误信息
+        }
+        return "Failed to fetch alarms from cloud";
+    }
+    if (!root) {
+        ESP_LOGE(TAG, "Failed to get alarm sync response");
+        return "Failed to get alarm sync response";
+    }
+    cJSON* alarms_array = cJSON_GetObjectItem(root, "data");
+    // 从云端响应中加载闹钟
+    Settings settings_("alarm_clock", true); // 闹钟设置
+    // 先清空所有设置
+    for(int i = 0; i < max_alarms_; i++){
+        settings_.SetString("alarm_" + std::to_string(i), "");
+        settings_.SetInt("alarm_time_" + std::to_string(i), 0);
+        settings_.SetInt("alarm_rpt_" + std::to_string(i), 0);
+        settings_.SetInt("alarm_itv_" + std::to_string(i), 0);
+    }
+    int alarm_count = cJSON_GetArraySize(alarms_array);
+    for (int i = 0; i < alarm_count; i++) {
+        cJSON* alarm_json = cJSON_GetArrayItem(alarms_array, i);
+        if (!alarm_json) continue;
+        Alarm alarm{};
+        cJSON* id_item = cJSON_GetObjectItem(alarm_json, "nvs_id");
+        cJSON* time_item = cJSON_GetObjectItem(alarm_json, "time");
+        cJSON* repeat_item = cJSON_GetObjectItem(alarm_json, "repeat");
+        cJSON* interval_item = cJSON_GetObjectItem(alarm_json, "interval");
+        cJSON* name_item = cJSON_GetObjectItem(alarm_json, "name");
+        alarm.id = id_item->valueint;
+        alarm.time = time_item->valueint;
+        alarm.repeat = repeat_item->valueint;
+        alarm.interval = interval_item->valueint;
+        alarm.name = std::string(name_item->valuestring);
+        alarms_.push_back(alarm);
+        // 保存到本地设置
+        settings_.SetString("alarm_" + std::to_string(alarm.id), alarm.name);
+        settings_.SetInt("alarm_time_" + std::to_string(alarm.id), alarm.time);
+        settings_.SetInt("alarm_rpt_" + std::to_string(alarm.id), alarm.repeat);
+        settings_.SetInt("alarm_itv_" + std::to_string(alarm.id), alarm.interval);
+        ESP_LOGI(TAG, "Loaded alarm from cloud: %s %s", alarm.name.c_str(), FormatTimestamp(alarm.time).c_str());
+    }
+    cJSON_Delete(root);
+    ESP_LOGI(TAG, "Successfully loaded %d alarms from cloud", alarm_count);
+    return "";
+}
+
+std::string AlarmManager::GetRingName() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return ring_name_;
 }

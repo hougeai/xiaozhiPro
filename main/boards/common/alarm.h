@@ -32,7 +32,7 @@ public:
     // 查询所有闹钟
     std::string QueryAllAlarm();
     // 清空所有闹钟
-    void CleanUpAlarm();
+    std::string CleanUpAlarm();
     // 清除过时的闹钟
     void ClearOverdueAlarm(time_t now);
     // 获取从现在开始第一个响的闹钟
@@ -46,7 +46,10 @@ public:
     // 清除闹钟标志位
     void ClearRing();
     // 获取当前闹钟内容
-    std::string GetRingName(){ return ring_name_; };
+    std::string GetRingName();
+    // 与云端同步闹钟数据
+    std::string SyncAlarmToCloud(const std::vector<Alarm>& alarms, const std::string& action);
+    std::string SyncAlarmFromCloud();
 private:
     std::vector<Alarm> alarms_; // 闹钟列表
     std::mutex mutex_; // 互斥锁
@@ -54,5 +57,7 @@ private:
 
     std::atomic<bool> ring_flag_{false}; 
     std::string ring_name_;
+    std::string server_url_;
+    int max_alarms_;
 };
 #endif
