@@ -33,6 +33,8 @@ public:
     std::string QueryAllAlarm();
     // 清空所有闹钟
     std::string CleanUpAlarm();
+    // 重新加载闹钟
+    std::string ReloadAlarms();
     // 清除过时的闹钟
     void ClearOverdueAlarm(time_t now);
     // 获取从现在开始第一个响的闹钟
@@ -48,7 +50,9 @@ public:
     // 获取当前闹钟内容
     std::string GetRingName();
     // 与云端同步闹钟数据
-    std::string SyncAlarmToCloud(const std::vector<Alarm>& alarms, const std::string& action);
+    // std::string SyncAlarmToCloud(const std::vector<Alarm>& alarms, const std::string& action);
+    std::string SyncAlarmToCloud(const Alarm& alarm, const std::string& action);
+    std::string ClearCloudAlarms();
     std::string SyncAlarmFromCloud();
 private:
     std::vector<Alarm> alarms_; // 闹钟列表

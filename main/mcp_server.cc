@@ -216,6 +216,22 @@ void McpServer::AddCommonTools() {
             std::string alarm_list = app.alarm_m_->QueryAllAlarm();
             return std::string(R"({"success":true,"alarms":)") + alarm_list + R"(})";
         });
+    AddTool("self.alarm.reload",
+        "重新加载所有的提醒和闹钟",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto& app = Application::GetInstance();
+            if(app.alarm_m_ == nullptr){
+                ESP_LOGE(TAG, "AlarmManager is nullptr");
+                 return R"({"success":false,"message":"AlarmManager is not initialized"})";
+            }
+            ESP_LOGI(TAG, "Reload All Alarm");
+            std::string result = app.alarm_m_->ReloadAlarms();
+            if (!result.empty()) {
+                return std::string(R"({"success":false,"message":")" + result + R"("})");
+            }
+            return R"({"success":true,"message":"Alarm reloaded successfully"})";
+        });
     // knowledge base
     AddTool("self.kb.query",
         "当用户咨询硅基流动产品相关内容时，可以通过关键词检索知识库获取更多的上下文"
@@ -314,15 +330,15 @@ void McpServer::AddCommonTools() {
             return "{\"success\": true, \"message\": \"音乐开始播放\"}";
         });
     // sys
-    AddTool("self.sys.get_verification_code",
-        "当用户要求查询设备验证码时使用此工具，返回验证码。\n",
+    AddTool("self.sys.device_auth",
+        "当用户要求绑定设备时使用此工具，返回验证码。\n",
         PropertyList(),
         [&board](const PropertyList& properties) -> ReturnValue {
             auto http = board.GetNetwork()->CreateHttp(1); // 1 是connect_id
             http->SetHeader("Content-Type", "application/json");
             std::string data = board.GetSystemInfoJson();
             http->SetContent(std::move(data));
-            if (!http->Open("POST", std::string(CONFIG_SERVER_URL) + "/get_code")) {
+            if (!http->Open("POST", std::string(CONFIG_SERVER_URL) + "/device_auth")) {
                 ESP_LOGE(TAG, "Failed to open HTTP connection");
                 return R"({"success":false,"message":"Failed to connect to the server"})";
             }
@@ -340,7 +356,7 @@ void McpServer::AddCommonTools() {
                 ESP_LOGE(TAG, "Failed to parse response");
                 return R"({"success":false,"message":"Failed to parse response"})";
             }
-            cJSON* code = cJSON_GetObjectItem(root, "code");
+            cJSON* code = cJSON_GetObjectItem(root, "data");
             std::string result;
             if (cJSON_IsString(code)) {
                 std::string code_str = code->valuestring;

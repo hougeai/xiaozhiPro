@@ -995,7 +995,7 @@ void Application::FlushConversationQueue() {
         http->SetContent(std::move(data));
         
         // 发送请求
-        if (!http->Open("POST", std::string(CONFIG_SERVER_URL) + "/upload_conversations")) {
+        if (!http->Open("POST", std::string(CONFIG_SERVER_URL) + "/device_conversation")) {
             ESP_LOGE(TAG, "Failed to connect to conversation server");
         }
         auto status_code = http->GetStatusCode();
