@@ -677,7 +677,7 @@ void Application::OnWakeWordDetected() {
     if (device_state_ == kDeviceStateIdle) {
         if (music_) {
             ESP_LOGI(TAG, "Stopping music streaming due to wake word detected");
-            music_->StopStreaming();
+            music_->StopLoopPlay();
             audio_service_.ResetDecoder();
         }
         audio_service_.EncodeWakeWord();
@@ -995,16 +995,16 @@ void Application::FlushConversationQueue() {
         http->SetContent(std::move(data));
         
         // 发送请求
-        if (!http->Open("POST", std::string(CONFIG_SERVER_URL) + "/device_conversation")) {
+        if (http->Open("POST", std::string(CONFIG_SERVER_URL) + "/device_conversation")) {
+            int status_code = http->GetStatusCode();
+            if (status_code == 200) {
+                ESP_LOGI(TAG, "Successfully sent %d conversations to server", temp_queue.size());
+            } else {
+                ESP_LOGW(TAG, "Server returned status code: %d", status_code);
+            }
+        } else {
             ESP_LOGE(TAG, "Failed to connect to conversation server");
         }
-        auto status_code = http->GetStatusCode();
-        if (status_code == 200) {
-            ESP_LOGI(TAG, "Successfully sent %d conversations to server", temp_queue.size());
-        } else {
-            ESP_LOGE(TAG, "Failed to send conversations to server, status code: %d", status_code);
-        }
-        // temp_queue.clear();  // 不需要清空，lambda局部变量 执行完毕会自动释放
         http->Close();
     });
 }

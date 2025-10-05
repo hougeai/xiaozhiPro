@@ -8,6 +8,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <vector>
+#include <map>        // 用到了map
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -20,9 +21,10 @@ extern "C" {
 struct AudioChunk {
     uint8_t* data;
     size_t size;
+    bool owned;
     
     AudioChunk() : data(nullptr), size(0) {}
-    AudioChunk(uint8_t* d, size_t s) : data(d), size(s) {}
+    AudioChunk(uint8_t* d, size_t s, bool o = true) : data(d), size(s), owned(o) {}
 };
 
 class Esp32Music {
@@ -90,7 +92,15 @@ private:
     // ID3标签处理
     size_t SkipId3Tag(uint8_t* data, size_t size);
 
-    int16_t* final_pcm_data_fft = nullptr;
+    // 播放历史记录
+    void SendPlayHistory(int song_id);
+
+    // 歌单循环播放相关
+    std::vector<std::map<std::string, std::string>> music_collection_;  // 存储歌单
+    int current_song_index_ = 0;  // 当前播放歌曲索引
+    std::atomic<bool> is_loop_playing_{false};  // 是否正在循环播放
+    TaskHandle_t loop_play_task_handle_ = nullptr;  // 循环播放任务句柄
+    void LoopPlayTask();
 
 public:
     Esp32Music();
@@ -102,6 +112,11 @@ public:
     bool StartStreaming(const std::string& music_url);
     bool StopStreaming();  // 停止流式播放
     size_t GetBufferSize() const { return buffer_size_; }
+    
+    std::string LoopPlay(const std::string& mode = "loop");  // 循环播放歌单
+    bool StopLoopPlay();  // 停止循环播放
+    void ResetLoop();  // 重置歌单
+    std::string PlayNextSong(); // 播放下一首歌曲
 };
 
 #endif

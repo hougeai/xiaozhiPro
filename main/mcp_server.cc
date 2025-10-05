@@ -303,15 +303,19 @@ void McpServer::AddCommonTools() {
             return result_str;
         });
     // music
-    AddTool("self.online_music.play",
+    AddTool("self.music.play",
         "当用户要求播放音乐时使用此工具，会自动获取歌曲详情并开始流式播放。\n"
+        "示例: \n"
+        "1. '播放青花瓷'\n"
+        "2. '我想听周杰伦的稻香'\n"
+        "3. '播放一首周杰伦的歌'\n"
         "参数:\n"
-        "  `song_name`: 要播放的歌曲名称（必需）。\n"
+        "  `song`: 要播放的歌曲名称（必需）。\n"
         "  `singer`: 歌手名称（可选，默认为空字符串）。\n"
         "返回:\n"
         "  播放状态信息。",
         PropertyList({
-            Property("song_name", kPropertyTypeString),
+            Property("song", kPropertyTypeString),
             Property("singer", kPropertyTypeString, "")
         }),
         [](const PropertyList& properties) -> ReturnValue {
@@ -320,14 +324,80 @@ void McpServer::AddCommonTools() {
                 ESP_LOGE(TAG, "MusicManager is nullptr");
                  return R"({"success":false,"message":"MusicManager is not initialized"})";
             }
-            auto song_name = properties["song_name"].value<std::string>();
+            auto song = properties["song"].value<std::string>();
             auto singer = properties["singer"].value<std::string>();
-            ESP_LOGI(TAG, "Playing music: %s %s", song_name.c_str(), singer.c_str());
+            ESP_LOGI(TAG, "Playing music: %s %s", song.c_str(), singer.c_str());
             
-            if (!app.music_->Download(song_name, singer)) {
+            if (!app.music_->Download(song, singer)) {
                 return "{\"success\": false, \"message\": \"获取音乐资源失败\"}";
             }
             return "{\"success\": true, \"message\": \"音乐开始播放\"}";
+        });
+    AddTool("self.music.playlist.loop",
+        "当用户要求播放歌单时使用此工具，有顺序和随机两种方式。\n"
+        "示例: \n"
+        "1. '随机播放歌单'\n"
+        "2. '循环播放音乐'\n"
+        "3. '播放歌单'\n"
+        "参数:\n"
+        "  `mode`: loop为顺序循环播放（默认），random为随机循环播放。\n"
+        "返回:\n"
+        "  播放状态信息。",
+        PropertyList({
+            Property("mode", kPropertyTypeString),
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto& app = Application::GetInstance();
+            if(app.music_ == nullptr){
+                ESP_LOGE(TAG, "MusicManager is nullptr");
+                 return R"({"success":false,"message":"MusicManager is not initialized"})";
+            }
+            auto mode = properties["mode"].value<std::string>();
+            ESP_LOGI(TAG, "Playing music collection: %s ", mode.c_str());
+            std::string result = app.music_->LoopPlay(mode);
+            if (result.empty()) {
+                return R"({"success":true,"message":"播放歌单任务开启成功"})";
+            } else {
+                return std::string(R"({"success":false,"message":")" + result + R"("})");
+            }
+        });
+    AddTool("self.music.playlist.refresh",
+        "当用户要求刷新歌单时使用此工具。\n"
+        "示例: \n"
+        "1. '刷新歌单'\n"
+        "2. '更新播放列表'\n"
+        "3. '重新加载歌单'",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto& app = Application::GetInstance();
+            if(app.music_ == nullptr){
+                ESP_LOGE(TAG, "MusicManager is nullptr");
+                 return R"({"success":false,"message":"MusicManager is not initialized"})";
+            }
+            ESP_LOGI(TAG, "Reset music collection");
+            app.music_->ResetLoop();
+            return R"({"success":true,"message":"歌单刷新成功，下次播放将从服务端同步歌单"})";
+        });
+    AddTool("self.music.playlist.next",
+        "当用户要求播放下一首歌曲时使用此工具。\n"
+        "示例: \n"
+        "1. '下一首'\n"
+        "2. '切换到下一首歌'\n"
+        "3. '播放下一首'",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto& app = Application::GetInstance();
+            if(app.music_ == nullptr){
+                ESP_LOGE(TAG, "MusicManager is nullptr");
+                 return R"({"success":false,"message":"MusicManager is not initialized"})";
+            }
+            ESP_LOGI(TAG, "Playing next song");
+            std::string result = app.music_->PlayNextSong();
+            if (result.empty()) {
+                return R"({"success":true,"message":"正在切换到下一首歌曲"})";
+            } else {
+                return std::string(R"({"success":false,"message":")" + result + R"("})");
+            }
         });
     // sys
     AddTool("self.sys.device_auth",

@@ -4,6 +4,7 @@
 #include "application.h"
 #include "protocols/protocol.h"
 #include "display/display.h"
+#include "system_info.h"
 #include <esp_log.h>
 #include <esp_heap_caps.h>
 #include <esp_pthread.h>
@@ -45,42 +46,6 @@ static std::string url_encode(const std::string& str) {
     return encoded;
 }
 
-// 在文件开头添加一个辅助函数，统一处理URL构建
-static std::string buildUrlWithParams(const std::string& base_url, const std::string& path, const std::string& query) {
-    std::string result_url = base_url + path + "?";
-    size_t pos = 0;
-    size_t amp_pos = 0;
-    
-    while ((amp_pos = query.find("&", pos)) != std::string::npos) {
-        std::string param = query.substr(pos, amp_pos - pos);
-        size_t eq_pos = param.find("=");
-        
-        if (eq_pos != std::string::npos) {
-            std::string key = param.substr(0, eq_pos);
-            std::string value = param.substr(eq_pos + 1);
-            result_url += key + "=" + url_encode(value) + "&";
-        } else {
-            result_url += param + "&";
-        }
-        
-        pos = amp_pos + 1;
-    }
-    
-    // 处理最后一个参数
-    std::string last_param = query.substr(pos);
-    size_t eq_pos = last_param.find("=");
-    
-    if (eq_pos != std::string::npos) {
-        std::string key = last_param.substr(0, eq_pos);
-        std::string value = last_param.substr(eq_pos + 1);
-        result_url += key + "=" + url_encode(value);
-    } else {
-        result_url += last_param;
-    }
-    
-    return result_url;
-}
-
 Esp32Music::Esp32Music() {
     ESP_LOGI(TAG, "Music player initialized");
     InitializeMp3Decoder();
@@ -88,7 +53,22 @@ Esp32Music::Esp32Music() {
 
 Esp32Music::~Esp32Music() {
     ESP_LOGI(TAG, "Destroying music player - stopping all operations");
+    StopLoopPlay();
+    // 等待循环播放任务结束（带超时）
+    if (loop_play_task_handle_ != nullptr) {
+        int timeout_count = 0;
+        const int MAX_TIMEOUT = 30; // 3秒超时
+        while (eTaskGetState(loop_play_task_handle_) != eDeleted && timeout_count < MAX_TIMEOUT) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            timeout_count++;
+        }
+        if (timeout_count >= MAX_TIMEOUT) {
+            ESP_LOGW(TAG, "Loop play task cleanup timeout, force deleting");
+            vTaskDelete(loop_play_task_handle_);
+        }
+    }
     StopStreaming();
+    vTaskDelay(pdMS_TO_TICKS(100)); // 等待一小段时间确保所有任务都完全停止
     CleanupMp3Decoder();
     ESP_LOGI(TAG, "Music player destroyed successfully");
 }
@@ -100,8 +80,9 @@ bool Esp32Music::Download(const std::string& song_name, const std::string& artis
     current_song_name_ = song_name;
     
     // 第一步：请求stream_pcm接口获取音频信息
-    std::string base_url = "http://www.xiaozhishop.xyz:5005";
-    std::string full_url = base_url + "/stream_pcm?song=" + url_encode(song_name) + "&artist=" + url_encode(artist_name);
+    // std::string base_url = "http://www.xiaozhishop.xyz:5005/stream_pcm";
+    std::string base_url = std::string(CONFIG_SERVER_URL) + "/device_music";
+    std::string full_url = base_url + "?song=" + url_encode(song_name) + "&singer=" + url_encode(artist_name);
     
     ESP_LOGI(TAG, "Request URL: %s", full_url.c_str());
     
@@ -112,6 +93,7 @@ bool Esp32Music::Download(const std::string& song_name, const std::string& artis
     // 设置基本请求头
     http->SetHeader("User-Agent", "ESP32-Music-Player/1.0");
     http->SetHeader("Accept", "application/json");
+    http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
     
     // 打开GET连接
     if (!http->Open("GET", full_url)) {
@@ -134,60 +116,37 @@ bool Esp32Music::Download(const std::string& song_name, const std::string& artis
         // 解析响应JSON以提取音频URL
         cJSON* response_json = cJSON_Parse(response_data.c_str());
         if (response_json) {
+            // 首先检查响应是否包含data字段
+            cJSON* data_obj = cJSON_GetObjectItem(response_json, "data");
             // 提取关键信息
-            cJSON* artist = cJSON_GetObjectItem(response_json, "artist");
-            cJSON* title = cJSON_GetObjectItem(response_json, "title");
-            cJSON* audio_url = cJSON_GetObjectItem(response_json, "audio_url");
-            cJSON* lyric_url = cJSON_GetObjectItem(response_json, "lyric_url");
-            
-            if (cJSON_IsString(artist)) {
-                ESP_LOGI(TAG, "Artist: %s", artist->valuestring);
-            }
-            if (cJSON_IsString(title)) {
-                ESP_LOGI(TAG, "Title: %s", title->valuestring);
-            }
+            cJSON* song_id = cJSON_GetObjectItem(data_obj, "song_id"); 
+            cJSON* singer = cJSON_GetObjectItem(data_obj, "singer");
+            cJSON* song = cJSON_GetObjectItem(data_obj, "song");
+            cJSON* audio_url = cJSON_GetObjectItem(data_obj, "audio_url");
+            cJSON* lyric_url = cJSON_GetObjectItem(data_obj, "lyric_url");
+            ESP_LOGI(TAG, "Singer: %s Song: %s song_id: %d", singer->valuestring, song->valuestring, song_id->valueint);
             
             // 检查audio_url是否有效
             if (cJSON_IsString(audio_url) && audio_url->valuestring && strlen(audio_url->valuestring) > 0) {
-                ESP_LOGI(TAG, "Audio URL path: %s", audio_url->valuestring);
-                // 第二步：拼接完整的音频下载URL，确保对audio_url进行URL编码
-                std::string audio_path = audio_url->valuestring;
-                // 使用统一的URL构建功能
-                if (audio_path.find("?") != std::string::npos) {
-                    size_t query_pos = audio_path.find("?");
-                    std::string path = audio_path.substr(0, query_pos);
-                    std::string query = audio_path.substr(query_pos + 1);
-                    current_music_url_ = buildUrlWithParams(base_url, path, query);
-                } else {
-                    current_music_url_ = base_url + audio_path;
-                }
-                
+                current_music_url_ = audio_url->valuestring;
                 song_name_displayed_ = false;  // 重置歌名显示标志
                 if (!StartStreaming(current_music_url_)) {
                     ESP_LOGE(TAG, "Failed to start streaming playback");
                     return false;
                 }
-                
                 // 处理歌词URL
                 if (cJSON_IsString(lyric_url) && lyric_url->valuestring && strlen(lyric_url->valuestring) > 0) {
-                    // 拼接完整的歌词下载URL，使用相同的URL构建逻辑
-                    std::string lyric_path = lyric_url->valuestring;
-                    if (lyric_path.find("?") != std::string::npos) {
-                        size_t query_pos = lyric_path.find("?");
-                        std::string path = lyric_path.substr(0, query_pos);
-                        std::string query = lyric_path.substr(query_pos + 1);
-                        current_lyric_url_ = buildUrlWithParams(base_url, path, query);
-                    } else {
-                        current_lyric_url_ = base_url + lyric_path;
-                    }
-                    // 显示歌词
+                    current_lyric_url_ = lyric_url->valuestring;
                     ESP_LOGI(TAG, "Loading lyrics for: %s (lyrics display mode)", song_name.c_str());
-                    
                     if (!DownloadLyrics(current_lyric_url_)) {
                         ESP_LOGW(TAG, "Failed to download lyrics, continuing without lyrics");
                     }
                 } else {
                     ESP_LOGW(TAG, "No lyric URL found for this song");
+                }
+                // 上传播放历史到服务器
+                if (cJSON_IsNumber(song_id)) {
+                    SendPlayHistory(song_id->valueint);
                 }             
                 cJSON_Delete(response_json);
                 return true;
@@ -267,7 +226,7 @@ bool Esp32Music::StartStreaming(const std::string& music_url) {
         return false;
     }
 
-    ESP_LOGI(TAG, "Streaming tasks started successfully");
+    ESP_LOGI(TAG, "Streaming tasks started from: %s", music_url.c_str());
     return true;
 }
 
@@ -402,7 +361,7 @@ void Esp32Music::DownloadAudioStream(const std::string& music_url) {
             buffer_cv_.wait(lock, [this] { return buffer_size_ < MAX_BUFFER_SIZE || !is_downloading_; });
             
             if (is_downloading_) {
-                audio_buffer_.push(AudioChunk(chunk_data, bytes_read)); // 放入缓冲区
+                audio_buffer_.push(AudioChunk(chunk_data, bytes_read, true)); // 放入缓冲区
                 buffer_size_ += bytes_read;
                 total_downloaded += bytes_read;
                 buffer_cv_.notify_one(); // 只唤醒一个线程，all 是唤醒所有线程；假设缓冲区之前已满，只有下载线程在等待，假设缓冲区之前为空，只有播放线程在等待
@@ -478,7 +437,15 @@ void Esp32Music::PlayAudioStream() {
     
     vTaskDelay(pdMS_TO_TICKS(300));
 
-    while (is_playing_) {     
+    while (true) {
+        // 先检查播放状态
+        {
+            std::unique_lock<std::mutex> lock(buffer_mutex_);
+            if (!is_playing_) {
+                ESP_LOGI(TAG, "Playback stopped by StopStreaming");
+                break;
+            }
+        }
         // 设备状态检查通过，显示当前播放的歌名
         if (!song_name_displayed_ && !current_song_name_.empty()) {
             auto& board = Board::GetInstance();
@@ -502,6 +469,10 @@ void Esp32Music::PlayAudioStream() {
                     }
                     // 等待下载新数据
                     buffer_cv_.wait(lock, [this] { return !audio_buffer_.empty() || !is_downloading_; });
+                }
+                if (!is_playing_) {
+                    ESP_LOGI(TAG, "Playback stopped while waiting for buffer");
+                    break;
                 }
                 chunk = std::move(audio_buffer_.front());
                 audio_buffer_.pop(); // 只移除，不返回元素值
@@ -532,7 +503,11 @@ void Esp32Music::PlayAudioStream() {
                 }
                 id3_processed = true;
             }
-            heap_caps_free(chunk.data); // 释放chunk内存
+            if (chunk.owned && chunk.data) {
+                heap_caps_free(chunk.data);
+                chunk.owned = false;
+            }
+            chunk.data = nullptr;
         }
         
         // 寻找下一个有效的MP3帧开始位置：MP3文件由一个个"帧"组成，每个帧都以特定的"同步字"开头（通常是0xFF）
@@ -626,6 +601,7 @@ void Esp32Music::PlayAudioStream() {
     // 清理
     if (mp3_input_buffer) {
         heap_caps_free(mp3_input_buffer);
+        mp3_input_buffer = nullptr;
     }
     
     // 播放结束时进行基本清理，但不调用StopStreaming避免线程自我等待
@@ -641,7 +617,7 @@ void Esp32Music::ClearAudioBuffer() {
     while (!audio_buffer_.empty()) {
         AudioChunk chunk = audio_buffer_.front();
         audio_buffer_.pop();
-        if (chunk.data) {
+        if (chunk.owned && chunk.data) {
             heap_caps_free(chunk.data);
         }
     }
@@ -922,4 +898,238 @@ std::vector<int16_t> Esp32Music::ResampleAudio(const int16_t* input, int input_s
     // ESP_LOGI(TAG, "Resampled audio from %d Hz to %d Hz: %d -> %d samples", input_rate, output_rate, input_samples, output_samples);
     
     return output;
+}
+
+// 上传播放历史
+void Esp32Music::SendPlayHistory(int song_id) {
+    ESP_LOGI(TAG, "Sending play history for song ID: %d", song_id);
+    // 使用xTaskCreate
+    int* song_id_param = (int*)malloc(sizeof(int));
+    if (song_id_param == nullptr) {
+        ESP_LOGE(TAG, "Failed to allocate memory for song_id parameter");
+        return;
+    }
+    *song_id_param = song_id;
+    BaseType_t result = xTaskCreate([](void* arg) {
+        int song_id = *(int*)arg;
+        free(arg); // 释放传递的参数内存
+        
+        // 使用Board提供的HTTP客户端
+        auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
+        
+        // 设置请求头
+        http->SetHeader("Content-Type", "application/json");
+        http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
+        
+        // 构造JSON数据
+        cJSON* root = cJSON_CreateObject();
+        cJSON_AddNumberToObject(root, "song_id", song_id);
+
+        char* json_str = cJSON_PrintUnformatted(root);
+        std::string data(json_str);
+        cJSON_free(json_str);
+        cJSON_Delete(root);
+        
+        http->SetContent(std::move(data));
+        
+        // 发送到服务器
+        std::string url = std::string(CONFIG_SERVER_URL) + "/device_music_record";
+        if (!http->Open("POST", url)) {
+            ESP_LOGE(TAG, "Failed to connect to play history API");
+            http->Close();
+            vTaskDelete(NULL); // 删除当前任务
+            return;
+        }
+        
+        int status_code = http->GetStatusCode();
+        if (status_code == 200) {
+            ESP_LOGI(TAG, "Successfully sent play history for song ID: %d", song_id);
+        } else {
+            ESP_LOGE(TAG, "Failed to send play history, status code: %d", status_code);
+        }
+        
+        http->Close();
+        vTaskDelete(NULL); // 删除当前任务
+    }, "PlayHistory", 4096, song_id_param, 5, NULL);
+    
+    if (result != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create play history task");
+        free(song_id_param);
+    }
+}
+
+// 循环播放
+std::string Esp32Music::LoopPlay(const std::string& mode) {
+    ESP_LOGI(TAG, "Starting loop play from music collection");
+    // 如果已经在循环播放，先停止
+    if (is_loop_playing_) {
+        StopLoopPlay();
+        vTaskDelay(pdMS_TO_TICKS(500)); // 等待停止完成
+    }
+    
+    // 检查是否已有歌单缓存
+    if (!music_collection_.empty()) {
+        ESP_LOGI(TAG, "Using cached music collection with %d songs, resuming from index %d", 
+                 music_collection_.size(), current_song_index_);
+    } else {
+        // 请求设备歌单
+        std::string base_url = std::string(CONFIG_SERVER_URL) + "/device_music_collection";
+        auto network = Board::GetInstance().GetNetwork();
+        auto http = network->CreateHttp(0);
+        
+        http->SetHeader("User-Agent", "ESP32-Music-Player/1.0");
+        http->SetHeader("Accept", "application/json");
+        http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
+        
+        if (!http->Open("GET", base_url)) {
+            ESP_LOGE(TAG, "Failed to connect to music collection API");
+            return "Failed to connect to music collection API";
+        }
+        
+        int status_code = http->GetStatusCode();
+        std::string response = http->ReadAll();
+        cJSON* root = cJSON_Parse(response.c_str());
+        http->Close();
+        if (status_code != 200) {
+            if (root) {
+                cJSON* msg = cJSON_GetObjectItem(root, "msg");
+                std::string error_msg = msg ? msg->valuestring : "Unknown error";
+                cJSON_Delete(root);
+                return error_msg;  // 返回具体错误信息
+            }
+            return "Failed to get music collection";
+        }
+        
+        cJSON* data_array = cJSON_GetObjectItem(root, "data");
+        
+        // 存储歌单数据
+        current_song_index_ = 0;
+        int array_size = cJSON_GetArraySize(data_array);
+        for (int i = 0; i < array_size; i++) {
+            cJSON* song_item = cJSON_GetArrayItem(data_array, i);
+            std::map<std::string, std::string> song_info;
+            
+            cJSON* song_id = cJSON_GetObjectItem(song_item, "song_id");
+            cJSON* song = cJSON_GetObjectItem(song_item, "song");
+            cJSON* singer = cJSON_GetObjectItem(song_item, "singer");
+            cJSON* audio_url = cJSON_GetObjectItem(song_item, "audio_url");
+            cJSON* lyric_url = cJSON_GetObjectItem(song_item, "lyric_url");
+            
+            if (cJSON_IsString(song) && cJSON_IsString(singer) && cJSON_IsString(audio_url)) {
+                song_info["song_id"] = std::to_string(song_id->valueint);
+                song_info["song"] = song->valuestring;
+                song_info["singer"] = singer->valuestring;
+                song_info["audio_url"] = audio_url->valuestring;
+                song_info["lyric_url"] = cJSON_IsString(lyric_url) ? lyric_url->valuestring : "";
+                music_collection_.push_back(song_info);
+            }
+        }
+        cJSON_Delete(root);
+        if (music_collection_.empty()) {
+            ESP_LOGW(TAG, "Music collection is empty");
+            return "当前设备歌单为空";
+        }
+        ESP_LOGI(TAG, "Loaded %d songs in collection", music_collection_.size());
+        
+    }
+    // 是否随机播放
+    if (mode == "random") {
+        for (int i = music_collection_.size() - 1; i > music_collection_.size()/2; i--) {
+            int j = esp_random() % (i + 1);  // ESP32自带的随机数函数
+            std::swap(music_collection_[i], music_collection_[j]);
+        }
+        ESP_LOGI(TAG, "Music collection shuffled for random play");
+    }
+    
+    // 启动循环播放任务
+    is_loop_playing_ = true;
+    
+    xTaskCreate([](void* param) {
+        static_cast<Esp32Music*>(param)->LoopPlayTask();
+    }, "loop_play_task", 4096, this, 5, &loop_play_task_handle_);
+    
+    return "";
+}
+
+// 循环播放任务
+void Esp32Music::LoopPlayTask() {
+    ESP_LOGI(TAG, "Loop play task started");
+    while (is_loop_playing_ && !music_collection_.empty()) {
+        auto& current_song = music_collection_[current_song_index_];
+        
+        ESP_LOGI(TAG, "Playing song %d/%d: %s - %s", 
+                 current_song_index_ + 1, music_collection_.size(),
+                 current_song["singer"].c_str(), current_song["song"].c_str());
+        
+        // 设置当前歌曲信息
+        current_song_name_ = current_song["song"];
+        current_music_url_ = current_song["audio_url"];
+        current_lyric_url_ = current_song["lyric_url"];
+        
+        // 开始播放当前歌曲
+        if (StartStreaming(current_music_url_)) {
+            // 下载歌词（如果有）
+            if (!current_lyric_url_.empty()) {
+                if (!DownloadLyrics(current_lyric_url_)) {
+                    ESP_LOGW(TAG, "Failed to download lyrics for current song");
+                }
+            }
+            
+            // 发送播放历史
+            int song_id = std::stoi(current_song["song_id"]);
+            SendPlayHistory(song_id);
+            
+            // 等待当前歌曲播放完成
+            auto& audio_service = Application::GetInstance().GetAudioService();
+            while ((!play_task_finished_ || !audio_service.IsIdle()) && is_loop_playing_) {
+                vTaskDelay(pdMS_TO_TICKS(1000));
+            }
+        } else {
+            ESP_LOGE(TAG, "Failed to start streaming for song: %s", current_song["song"].c_str());
+        }
+        
+        // 如果还在循环播放模式，切换到下一首
+        if (is_loop_playing_) {
+            current_song_index_ = (current_song_index_ + 1) % music_collection_.size();
+            vTaskDelay(pdMS_TO_TICKS(500)); // 短暂延迟
+        }
+    }
+    ESP_LOGI(TAG, "Loop play task finished");
+    loop_play_task_handle_ = nullptr;
+    vTaskDelete(nullptr);
+}
+
+bool Esp32Music::StopLoopPlay() {
+    ESP_LOGI(TAG, "Stopping loop play");
+    is_loop_playing_ = false;
+    
+    // 停止当前播放
+    StopStreaming();
+    
+    // music_collection_.clear(); // 不清空，下次接着播放
+    // current_song_index_ = 0;
+    ESP_LOGI(TAG, "Loop play stopped, will resume from song %d next time", current_song_index_ + 1);
+    return true;
+}
+
+void Esp32Music::ResetLoop() {
+    music_collection_.clear();
+    current_song_index_ = 0;
+    ESP_LOGI(TAG, "Music collection reset, will fetch from server next time");
+}
+
+// 播放下一首歌曲
+std::string Esp32Music::PlayNextSong() {
+    ESP_LOGI(TAG, "Playing next song");
+    if (music_collection_.empty()) {
+        ESP_LOGW(TAG, "Music collection is empty");
+        return "当前设备歌单为空";
+    } 
+    // 更新索引到下一首歌曲
+    current_song_index_ = (current_song_index_ + 1) % music_collection_.size();
+    std::string result = LoopPlay("loop");
+    if (!result.empty()) {
+        return result;
+    }
+    return "";
 }
