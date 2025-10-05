@@ -971,10 +971,7 @@ void Application::FlushConversationQueue() {
         this->current_stt_text_.clear();
         this->current_tts_text_.clear();
         ESP_LOGI(TAG, "Flushing %d conversations to server", temp_queue.size());
-        // 创建HTTP客户端
-        auto http = Board::GetInstance().GetNetwork()->CreateHttp(2);
-        http->SetHeader("Content-Type", "application/json");
-        http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
+
         // 构造包含多个对话的JSON数组
         cJSON* root = cJSON_CreateObject();
         cJSON* conversation = cJSON_CreateArray();
@@ -991,20 +988,39 @@ void Application::FlushConversationQueue() {
         std::string data(json_str);
         cJSON_free(json_str); // 释放JSON字符串内存
         cJSON_Delete(root);  // 释放JSON对象内存，会递归释放所有子对象
+
+        const int max_retries = 3;
+        int retry_count = 0;
+        bool success = false;
         
-        http->SetContent(std::move(data));
-        
-        // 发送请求
-        if (http->Open("POST", std::string(CONFIG_SERVER_URL) + "/device_conversation")) {
-            int status_code = http->GetStatusCode();
-            if (status_code == 200) {
-                ESP_LOGI(TAG, "Successfully sent %d conversations to server", temp_queue.size());
+        while (retry_count < max_retries && !success) {
+            // 创建HTTP客户端
+            auto http = Board::GetInstance().GetNetwork()->CreateHttp(2);
+            http->SetHeader("Content-Type", "application/json");
+            http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
+            std::string data_copy = data;
+            http->SetContent(std::move(data_copy));
+            // 发送请求
+            if (http->Open("POST", std::string(CONFIG_SERVER_URL) + "/device_conversation")) {
+                int status_code = http->GetStatusCode();
+                if (status_code == 200) {
+                    ESP_LOGI(TAG, "Successfully sent %d conversations to server", temp_queue.size());
+                    success = true;
+                } else {
+                    ESP_LOGW(TAG, "Server returned status code: %d", status_code);
+                }
             } else {
-                ESP_LOGW(TAG, "Server returned status code: %d", status_code);
+                ESP_LOGE(TAG, "Failed to connect to conversation server");
             }
-        } else {
-            ESP_LOGE(TAG, "Failed to connect to conversation server");
+            http->Close();
+            if (!success && (retry_count + 1) < max_retries) {
+                // 在重试前等待一段时间
+                vTaskDelay(pdMS_TO_TICKS(1000));
+            }
+            retry_count++;
         }
-        http->Close();
+        if (!success) {
+            ESP_LOGE(TAG, "Failed to send conversations to server after %d attempts", max_retries);
+        }
     });
 }

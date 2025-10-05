@@ -489,10 +489,11 @@ void Esp32Music::PlayAudioStream() {
             size_t space_available = 8192 - bytes_left; //
             size_t copy_size = std::min(chunk.size, space_available);
             // 剩余数据后面追加新的chunk数据
-            memcpy(mp3_input_buffer + bytes_left, chunk.data, copy_size);
-            bytes_left += copy_size;
-            read_ptr = mp3_input_buffer;
-            
+            if (chunk.data != nullptr && chunk.size > 0 && chunk.owned) {
+                memcpy(mp3_input_buffer + bytes_left, chunk.data, copy_size);
+                bytes_left += copy_size;
+                read_ptr = mp3_input_buffer;
+            }
             // 检查并跳过ID3标签（仅在开始时处理一次）
             if (!id3_processed && bytes_left >= 10) {
                 size_t id3_skip = SkipId3Tag(read_ptr, bytes_left);
