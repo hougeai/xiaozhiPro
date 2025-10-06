@@ -327,11 +327,12 @@ void McpServer::AddCommonTools() {
             auto song = properties["song"].value<std::string>();
             auto singer = properties["singer"].value<std::string>();
             ESP_LOGI(TAG, "Playing music: %s %s", song.c_str(), singer.c_str());
-            
-            if (!app.music_->Download(song, singer)) {
-                return "{\"success\": false, \"message\": \"获取音乐资源失败\"}";
+            std::string result = app.music_->SinglePlay(song, singer);
+            if (result.empty()) {
+                return R"({"success":true,"message":"音乐开始播放"})";
+            } else {
+                return std::string(R"({"success":false,"message":")" + result + R"("})");
             }
-            return "{\"success\": true, \"message\": \"音乐开始播放\"}";
         });
     AddTool("self.music.playlist.loop",
         "当用户要求播放歌单时使用此工具，有顺序和随机两种方式。\n"

@@ -106,7 +106,7 @@ public:
     Esp32Music();
     ~Esp32Music();
 
-    bool Download(const std::string& song_name, const std::string& artist_name);
+    std::string SinglePlay(const std::string& song_name, const std::string& artist_name);
   
     // 流式播放相关方法
     bool StartStreaming(const std::string& music_url);
