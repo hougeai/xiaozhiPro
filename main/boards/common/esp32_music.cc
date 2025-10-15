@@ -134,6 +134,7 @@ std::string Esp32Music::SinglePlay(const std::string& song_name, const std::stri
             // 检查audio_url是否有效
             if (cJSON_IsString(audio_url) && audio_url->valuestring && strlen(audio_url->valuestring) > 0) {
                 current_music_url_ = audio_url->valuestring;
+                current_song_id_ = song_id->valueint; 
                 song_name_displayed_ = false;  // 重置歌名显示标志
                 if (!StartStreaming(current_music_url_)) {
                     ESP_LOGE(TAG, "Failed to start streaming playback");
@@ -149,10 +150,6 @@ std::string Esp32Music::SinglePlay(const std::string& song_name, const std::stri
                 } else {
                     ESP_LOGW(TAG, "No lyric URL found for this song");
                 }
-                // 上传播放历史到服务器
-                if (cJSON_IsNumber(song_id)) {
-                    SendPlayHistory(song_id->valueint);
-                }             
                 cJSON_Delete(response_json);
                 return "";
             } else {
@@ -181,6 +178,7 @@ bool Esp32Music::StartStreaming(const std::string& music_url) {
     force_stop_ = false;
     streaming_url_ = music_url;
     current_lyric_index_ = -1;
+    total_downloaded_ = 0;  // 重置已下载字节数
     // 重置任务完成标志
     download_task_finished_ = false;
     play_task_finished_ = false;
@@ -290,97 +288,123 @@ bool Esp32Music::StopStreaming() {
 void Esp32Music::DownloadAudioStream(const std::string& music_url) {
     auto network = Board::GetInstance().GetNetwork();
     auto http = network->CreateHttp(0);
-    
-    // 设置基本请求头
-    http->SetHeader("User-Agent", "ESP32-Music-Player/1.0");
-    http->SetHeader("Accept", "*/*");
-    http->SetHeader("Range", "bytes=0-");  // 支持断点续传
-    
-    if (!http->Open("GET", music_url)) {
-        ESP_LOGE(TAG, "Failed to connect to music stream URL");
-        is_downloading_ = false;
-        return;
-    }
-    
-    int status_code = http->GetStatusCode();
-    if (status_code != 200 && status_code != 206) {  // 206 for partial content
-        ESP_LOGE(TAG, "HTTP GET failed with status code: %d", status_code);
-        http->Close();
-        is_downloading_ = false;
-        return;
-    }
-    
-    ESP_LOGI(TAG, "Started downloading audio stream, status: %d", status_code);
-    
-    // 分块读取音频数据
-    const size_t chunk_size = 4096;  // 4KB每块
-    char buffer[chunk_size]; // 循环使用的临时缓冲区
-    size_t total_downloaded = 0;
-    // 只有当下载和播放都处于活动状态时才继续，如果用户停止播放||下载错误，都停止下载
-    while (is_downloading_ && is_playing_) {
-        int bytes_read = http->Read(buffer, chunk_size);
-        if (bytes_read <= 0) {
-            ESP_LOGI(TAG, "Audio stream download completed, total: %d bytes", total_downloaded);
-            break;
+    // 添加重试机制
+    const int max_retries = 3;
+    int retry_count = 0;
+    bool download_success = false;
+    while (retry_count < max_retries && !download_success && is_downloading_ && is_playing_) {
+        // 设置基本请求头
+        http->SetHeader("User-Agent", "ESP32-Music-Player/1.0");
+        http->SetHeader("Accept", "*/*");
+        // 支持断点续传
+        if (retry_count > 0) {
+            // 如果是重试，尝试从上次中断的位置继续下载
+            std::string range_header = "bytes=" + std::to_string(total_downloaded_) + "-";
+            http->SetHeader("Range", range_header);
+            ESP_LOGI(TAG, "Resuming download from byte %d", total_downloaded_);
+        } else {
+            http->SetHeader("Range", "bytes=0-");
         }
-        // 只在第一次读取时检测文件类型
-        if (total_downloaded == 0 && bytes_read >= 4) {
-            if (memcmp(buffer, "ID3", 3) == 0) {
-                ESP_LOGI(TAG, "Detected MP3 file with ID3 tag");
-                detected_format_ = FORMAT_MP3; // 含有id3头部，后面需要skip
-            } else if (buffer[0] == 0xFF && (buffer[1] & 0xE0) == 0xE0) {
-                ESP_LOGI(TAG, "Detected MP3 file header");
-                detected_format_ = FORMAT_MP3; // 纯MP3数据，后面不需要skip
-            } else if (memcmp(buffer, "RIFF", 4) == 0) {
-                ESP_LOGI(TAG, "Detected WAV file");
-                detected_format_ = FORMAT_WAV;
-            } else if (memcmp(buffer, "fLaC", 4) == 0) {
-                ESP_LOGI(TAG, "Detected FLAC file");
-                detected_format_ = FORMAT_FLAC;
-            } else if (memcmp(buffer, "OggS", 4) == 0) {
-                ESP_LOGI(TAG, "Detected OGG file");
-                detected_format_ = FORMAT_OGG;
-            } else {
-                ESP_LOGI(TAG, "Unknown audio format, first 4 bytes: %02X %02X %02X %02X", 
-                        (unsigned char)buffer[0], (unsigned char)buffer[1], 
-                        (unsigned char)buffer[2], (unsigned char)buffer[3]);
+        if (!http->Open("GET", music_url)) {
+            ESP_LOGE(TAG, "Failed to connect to music stream URL (attempt %d/%d)", retry_count + 1, max_retries);
+            http->Close();
+            retry_count++;
+            if (retry_count < max_retries) {
+                vTaskDelay(pdMS_TO_TICKS(1000 * retry_count)); // 递增延迟重试
             }
-            if (detected_format_ != FORMAT_MP3) {
-                is_downloading_ = false;  // 停止下载
+            continue;
+        }
+        int status_code = http->GetStatusCode();
+        if (status_code != 200 && status_code != 206) {  // 206 for partial content
+            ESP_LOGE(TAG, "HTTP GET failed with status code: %d (attempt %d/%d)", status_code, retry_count + 1, max_retries);
+            http->Close();
+            retry_count++;
+            if (retry_count < max_retries) {
+                vTaskDelay(pdMS_TO_TICKS(1000 * retry_count)); // 递增延迟重试
+            }
+            continue;
+        }
+        if (retry_count == 0) {
+            ESP_LOGI(TAG, "Started downloading audio stream, status: %d", status_code);
+        } else {
+            ESP_LOGI(TAG, "Resumed downloading audio stream, status: %d", status_code);
+        }
+        // 分块读取音频数据
+        const size_t chunk_size = 4096;  // 4KB每块
+        char buffer[chunk_size]; // 循环使用的临时缓冲区
+        // 只有当下载和播放都处于活动状态时才继续，如果用户停止播放||下载错误，都停止下载
+        while (is_downloading_ && is_playing_) {
+            int bytes_read = http->Read(buffer, chunk_size);
+            if (bytes_read <= 0) {
+                ESP_LOGI(TAG, "Audio stream download completed, total: %d bytes", total_downloaded_);
+                download_success = true;
                 break;
             }
-        }
-        
-        // 为每个数据块分配独立的内存
-        uint8_t* chunk_data = (uint8_t*)heap_caps_malloc(bytes_read, MALLOC_CAP_SPIRAM);
-        if (!chunk_data) {
-            ESP_LOGE(TAG, "Failed to allocate memory for audio chunk");
-            break;
-        }
-        memcpy(chunk_data, buffer, bytes_read); // 复制到独立内存
-        
-        // 等待缓冲区有空间
-        {
-            std::unique_lock<std::mutex> lock(buffer_mutex_); // 获取互斥锁，lock_guard只能加锁解锁不能中途释放，unique_lock可以随时解锁
-            // buffer_cv_.wait(lock, 条件函数); 如果条件为假，会阻塞等待直到其它地方notify重新检查条件，条件为真，立即执行；is_downloading_为false时，wait也会立即返回 不会阻塞
-            buffer_cv_.wait(lock, [this] { return buffer_size_ < MAX_BUFFER_SIZE || !is_downloading_; });
-            
-            if (is_downloading_) {
-                audio_buffer_.push(AudioChunk(chunk_data, bytes_read, true)); // 放入缓冲区
-                buffer_size_ += bytes_read;
-                total_downloaded += bytes_read;
-                buffer_cv_.notify_one(); // 只唤醒一个线程，all 是唤醒所有线程；假设缓冲区之前已满，只有下载线程在等待，假设缓冲区之前为空，只有播放线程在等待
-                if (total_downloaded % (256 * 1024) == 0) {  // 每256KB打印一次进度
-                    ESP_LOGI(TAG, "Downloaded %d bytes, buffer size: %d", total_downloaded, buffer_size_);
+            // 只在第一次读取时检测文件类型
+            if (total_downloaded_ == 0 && bytes_read >= 4) {
+                if (memcmp(buffer, "ID3", 3) == 0) {
+                    ESP_LOGI(TAG, "Detected MP3 file with ID3 tag");
+                    detected_format_ = FORMAT_MP3; // 含有id3头部，后面需要skip
+                } else if (buffer[0] == 0xFF && (buffer[1] & 0xE0) == 0xE0) {
+                    ESP_LOGI(TAG, "Detected MP3 file header");
+                    detected_format_ = FORMAT_MP3; // 纯MP3数据，后面不需要skip
+                } else if (memcmp(buffer, "RIFF", 4) == 0) {
+                    ESP_LOGI(TAG, "Detected WAV file");
+                    detected_format_ = FORMAT_WAV;
+                } else if (memcmp(buffer, "fLaC", 4) == 0) {
+                    ESP_LOGI(TAG, "Detected FLAC file");
+                    detected_format_ = FORMAT_FLAC;
+                } else if (memcmp(buffer, "OggS", 4) == 0) {
+                    ESP_LOGI(TAG, "Detected OGG file");
+                    detected_format_ = FORMAT_OGG;
+                } else {
+                    ESP_LOGI(TAG, "Unknown audio format, first 4 bytes: %02X %02X %02X %02X", 
+                            (unsigned char)buffer[0], (unsigned char)buffer[1], 
+                            (unsigned char)buffer[2], (unsigned char)buffer[3]);
                 }
-            } else {
-                heap_caps_free(chunk_data);
+                if (detected_format_ != FORMAT_MP3) {
+                    is_downloading_ = false;  // 停止下载
+                    break;
+                }
+            }
+            
+            // 为每个数据块分配独立的内存
+            uint8_t* chunk_data = (uint8_t*)heap_caps_malloc(bytes_read, MALLOC_CAP_SPIRAM);
+            if (!chunk_data) {
+                ESP_LOGE(TAG, "Failed to allocate memory for audio chunk");
                 break;
             }
+            memcpy(chunk_data, buffer, bytes_read); // 复制到独立内存
+            
+            // 等待缓冲区有空间
+            {
+                std::unique_lock<std::mutex> lock(buffer_mutex_); // 获取互斥锁，lock_guard只能加锁解锁不能中途释放，unique_lock可以随时解锁
+                // buffer_cv_.wait(lock, 条件函数); 如果条件为假，会阻塞等待直到其它地方notify重新检查条件，条件为真，立即执行；is_downloading_为false时，wait也会立即返回 不会阻塞
+                buffer_cv_.wait(lock, [this] { return buffer_size_ < MAX_BUFFER_SIZE || !is_downloading_; });
+                
+                if (is_downloading_) {
+                    audio_buffer_.push(AudioChunk(chunk_data, bytes_read, true)); // 放入缓冲区
+                    buffer_size_ += bytes_read;
+                    total_downloaded_ += bytes_read;
+                    buffer_cv_.notify_one(); // 只唤醒一个线程，all 是唤醒所有线程；假设缓冲区之前已满，只有下载线程在等待，假设缓冲区之前为空，只有播放线程在等待
+                    if (total_downloaded_ % (256 * 1024) == 0) {  // 每256KB打印一次进度
+                        ESP_LOGI(TAG, "Downloaded %d bytes, buffer size: %d", total_downloaded_, buffer_size_);
+                    }
+                } else {
+                    heap_caps_free(chunk_data);
+                    break;
+                }
+            }
         }
+        http->Close();
+        // 如果下载未成功且还需要重试
+        if (!download_success && is_downloading_ && is_playing_ && retry_count < max_retries - 1) {
+            ESP_LOGW(TAG, "Download interrupted, retrying in %d seconds...", retry_count + 1);
+            vTaskDelay(pdMS_TO_TICKS(1000 * (retry_count + 1)));
+        } 
+        retry_count++;
     }
-    
-    http->Close();
+
     is_downloading_ = false;
     
     // 通知播放线程下载完成
@@ -389,7 +413,11 @@ void Esp32Music::DownloadAudioStream(const std::string& music_url) {
         buffer_cv_.notify_all();
     }
     
-    ESP_LOGI(TAG, "Audio stream download finished");
+    if (download_success) {
+        ESP_LOGI(TAG, "Audio stream download finished successfully");
+    } else {
+        ESP_LOGE(TAG, "Audio stream download failed after %d attempts", max_retries);
+    }
 }
 
 // 流式播放音频数据
@@ -556,24 +584,30 @@ void Esp32Music::PlayAudioStream() {
             if (mp3_frame_info_.outputSamps > 0) {
                 int16_t* final_pcm_data = pcm_buffer;
                 int final_sample_count = mp3_frame_info_.outputSamps;
-                std::vector<int16_t> mono_buffer;
-                
+
                 // 如果是双通道，转换为单通道混合
                 if (mp3_frame_info_.nChans == 2) {
                     // 双通道转单通道：将左右声道混合
                     int stereo_samples = mp3_frame_info_.outputSamps;  // 包含左右声道的总样本数
-                    int mono_samples = stereo_samples / 2;  // 单声道样本数
-                    
-                    mono_buffer.resize(mono_samples);
-                    
+                    int mono_samples = stereo_samples / 2;  // 单声道样本数                    
+                    // 安全检查
+                    if (mono_samples > MAX_MONO_SAMPLES) {
+                        ESP_LOGE(TAG, "Mono samples overflow: %d > %d", mono_samples, MAX_MONO_SAMPLES);
+                        continue;
+                    }
                     for (int i = 0; i < mono_samples; ++i) {
                         // 混合左右声道 (L + R) / 2
                         int left = pcm_buffer[i * 2];      // 左声道
                         int right = pcm_buffer[i * 2 + 1]; // 右声道
-                        mono_buffer[i] = (int16_t)((left + right) / 2); // 混合
+                        mono_buffer_[i] = (int16_t)((left + right) / 2); // 混合
                     }
-                    final_pcm_data = mono_buffer.data();
+                    final_pcm_data = mono_buffer_;
                     final_sample_count = mono_samples;
+                }
+                // 等待队列消化
+                while (app.GetAudioService().GetPlayQueueLength() >= 200) {
+                    // ESP_LOGW(TAG, "Audio queue (%d frames), delaying...", app.GetAudioService().GetPlayQueueLength());
+                    vTaskDelay(pdMS_TO_TICKS(500));
                 }
                 // 如果需要，将采样率转换为指定的目标采样率
                 std::vector<int16_t> resampled_pcm = ResampleAudio(
@@ -593,7 +627,7 @@ void Esp32Music::PlayAudioStream() {
                     ESP_LOGI(TAG, "Played %d bytes, buffer size: %d", total_played, buffer_size_);
                 }
                 vTaskDelay(1);   // 给调度器一点时间，避免 watchdog, 1 tick (~1ms)
-            }    
+            }
         } else {
             // 解码失败
             ESP_LOGW(TAG, "MP3 decode failed with error: %d", decode_result);
@@ -617,6 +651,11 @@ void Esp32Music::PlayAudioStream() {
     ESP_LOGI(TAG, "Audio stream playback finished, total played: %d bytes", total_played);
     // 停止播放标志
     is_playing_ = false;
+    if (current_song_id_ > 0) {
+        ESP_LOGI(TAG, "Audio stream playback finished, sending currend_song_id %d", current_song_id_);
+        SendPlayHistory(current_song_id_);
+        current_song_id_ = 0;
+    }
 }
 
 // 清空音频缓冲区
@@ -911,57 +950,68 @@ std::vector<int16_t> Esp32Music::ResampleAudio(const int16_t* input, int input_s
 
 // 上传播放历史
 void Esp32Music::SendPlayHistory(int song_id) {
-    ESP_LOGI(TAG, "Sending play history for song ID: %d", song_id);
-    // 使用std::thread替代xTaskCreate，更好的资源管理
-    std::thread([song_id]() {
-        // 使用Board提供的HTTP客户端
-        auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
-        if (!http) {
-            ESP_LOGE(TAG, "Failed to create HTTP client for play history");
-            return;
-        }
-        // 设置请求头
-        http->SetHeader("Content-Type", "application/json");
-        http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
-        
-        // 构造JSON数据
-        cJSON* root = cJSON_CreateObject();
-        cJSON_AddNumberToObject(root, "song_id", song_id);
+    ESP_LOGI(TAG, "Queueing play history for song ID: %d", song_id);
 
-        char* json_str = cJSON_PrintUnformatted(root);
-        std::string data(json_str);
-        cJSON_free(json_str);
-        cJSON_Delete(root);
-        http->SetContent(std::move(data));
-        
-        std::string url = std::string(CONFIG_SERVER_URL) + "/device_music_record";
-        // 添加重试机制
-        const int max_retries = 3;
-        int retry_count = 0;
-        bool success = false;
-        
-        while (retry_count < max_retries && !success) {
-            if (http->Open("POST", url)) {
-                int status_code = http->GetStatusCode();
-                if (status_code == 200) {
-                    ESP_LOGI(TAG, "Successfully sent play history for song ID: %d", song_id);
-                    success = true;
+    // 直接传递 song_id，先转换为 void*
+    xTaskCreate(
+        [](void* pvParameter) {
+            int song_id = reinterpret_cast<intptr_t>(pvParameter);  // 取回 song_id
+            auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
+            if (!http) {
+                ESP_LOGE(TAG, "Failed to create HTTP client for play history");
+                vTaskDelete(nullptr);
+                return;
+            }
+
+            http->SetHeader("Content-Type", "application/json");
+            http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
+
+            cJSON* root = cJSON_CreateObject();
+            cJSON_AddNumberToObject(root, "song_id", song_id);
+            char* json_str = cJSON_PrintUnformatted(root);
+            std::string data(json_str);
+            cJSON_free(json_str);
+            cJSON_Delete(root);
+
+            http->SetContent(std::move(data));
+
+            std::string url = std::string(CONFIG_SERVER_URL) + "/device_music_record";
+
+            const int max_retries = 3;
+            int retry_count = 0;
+            bool success = false;
+
+            while (retry_count < max_retries && !success) {
+                if (http->Open("POST", url)) {
+                    int status_code = http->GetStatusCode();
+                    if (status_code == 200) {
+                        ESP_LOGI(TAG, "Successfully sent play history for song ID: %d", song_id);
+                        success = true;
+                    } else {
+                        ESP_LOGE(TAG, "Failed to send play history, status code: %d", status_code);
+                    }
                 } else {
-                    ESP_LOGE(TAG, "Failed to send play history, status code: %d", status_code);
+                    ESP_LOGE(TAG, "Failed to connect to play history API (attempt %d/%d)",
+                             retry_count + 1, max_retries);
                 }
-            } else {
-                ESP_LOGE(TAG, "Failed to connect to play history API (attempt %d/%d)", 
-                         retry_count+1, max_retries);
+
+                if (!success && (retry_count + 1) < max_retries) {
+                    vTaskDelay(pdMS_TO_TICKS(1000 * (retry_count + 1)));
+                }
+                retry_count++;
             }
-            if (!success && (retry_count + 1) < max_retries) {
-                // 在重试前等待一段时间
-                vTaskDelay(pdMS_TO_TICKS(1000 * (retry_count + 1))); // 递增延迟
-            }
-            retry_count++;
-        }
-        http->Close();
-    }).detach();
+
+            http->Close();
+            vTaskDelete(nullptr);
+        },
+        "SendPlayHistoryTask",
+        4096,
+        reinterpret_cast<void*>(song_id),  // 直接传 song_id
+        tskIDLE_PRIORITY + 1, // 比空闲任务高一个优先级，用于不需要高优先级的后台任务
+        nullptr
+    );
 }
+
 
 // 循环播放
 std::string Esp32Music::LoopPlay(const std::string& mode) {
@@ -1005,7 +1055,10 @@ std::string Esp32Music::LoopPlay(const std::string& mode) {
             return "Failed to get music collection";
         }
         
-        cJSON* data_array = cJSON_GetObjectItem(root, "data");
+        cJSON* data_obj = cJSON_GetObjectItem(root, "data");
+        cJSON* quota_obj = cJSON_GetObjectItem(data_obj, "quota");
+        current_quota_ = quota_obj ? quota_obj->valueint : -1; // -1 表示无限制
+        cJSON* data_array = cJSON_GetObjectItem(data_obj, "collections");
         
         // 存储歌单数据
         current_song_index_ = 0;
@@ -1021,7 +1074,7 @@ std::string Esp32Music::LoopPlay(const std::string& mode) {
             cJSON* lyric_url = cJSON_GetObjectItem(song_item, "lyric_url");
             
             if (cJSON_IsString(song) && cJSON_IsString(singer) && cJSON_IsString(audio_url)) {
-                song_info["song_id"] = std::to_string(song_id->valueint);
+                song_info["song_id"] = std::to_string(song_id->valueint);;
                 song_info["song"] = song->valuestring;
                 song_info["singer"] = singer->valuestring;
                 song_info["audio_url"] = audio_url->valuestring;
@@ -1034,7 +1087,7 @@ std::string Esp32Music::LoopPlay(const std::string& mode) {
             ESP_LOGW(TAG, "Music collection is empty");
             return "当前设备歌单为空";
         }
-        ESP_LOGI(TAG, "Loaded %d songs in collection", music_collection_.size());
+        ESP_LOGI(TAG, "Loaded %d songs in collection, quota: %d", music_collection_.size(), current_quota_);
     }
     // 是否随机播放
     if (mode == "random") {
@@ -1058,17 +1111,20 @@ std::string Esp32Music::LoopPlay(const std::string& mode) {
 // 循环播放任务
 void Esp32Music::LoopPlayTask() {
     ESP_LOGI(TAG, "Loop play task started");
-    while (is_loop_playing_ && !music_collection_.empty()) {
+    while (is_loop_playing_ && !music_collection_.empty() && current_quota_ > 0) {
+        current_quota_--;
+
         auto& current_song = music_collection_[current_song_index_];
         
-        ESP_LOGI(TAG, "Playing song %d/%d: %s - %s", 
+        ESP_LOGI(TAG, "Playing song %d/%d: %s - %s quota: %d", 
                  current_song_index_ + 1, music_collection_.size(),
-                 current_song["singer"].c_str(), current_song["song"].c_str());
+                 current_song["singer"].c_str(), current_song["song"].c_str(), current_quota_);
         
         // 设置当前歌曲信息
         current_song_name_ = current_song["song"];
         current_music_url_ = current_song["audio_url"];
         current_lyric_url_ = current_song["lyric_url"];
+        current_song_id_ = std::stoi(current_song["song_id"]);
         
         // 开始播放当前歌曲
         if (StartStreaming(current_music_url_)) {
@@ -1078,10 +1134,6 @@ void Esp32Music::LoopPlayTask() {
                     ESP_LOGW(TAG, "Failed to download lyrics for current song");
                 }
             }
-            
-            // 发送播放历史
-            int song_id = std::stoi(current_song["song_id"]);
-            SendPlayHistory(song_id);
             
             // 等待当前歌曲播放完成
             auto& audio_service = Application::GetInstance().GetAudioService();
@@ -1098,7 +1150,7 @@ void Esp32Music::LoopPlayTask() {
             vTaskDelay(pdMS_TO_TICKS(500)); // 短暂延迟
         }
     }
-    ESP_LOGI(TAG, "Loop play task finished");
+    ESP_LOGI(TAG, "Loop play task finished, with quota: %d", current_quota_);
     loop_play_task_handle_ = nullptr;
     vTaskDelete(nullptr);
 }
@@ -1109,6 +1161,12 @@ bool Esp32Music::StopLoopPlay() {
     
     // 停止当前播放
     StopStreaming();
+    
+    if (current_song_id_ > 0) {
+        ESP_LOGI(TAG, "Sending currend_song_id %d", current_song_id_);
+        SendPlayHistory(current_song_id_);
+        current_song_id_ = 0;
+    }
     
     // music_collection_.clear(); // 不清空，下次接着播放
     // current_song_index_ = 0;

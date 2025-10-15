@@ -113,6 +113,7 @@ public:
     void PlayExternalPcmData(std::vector<int16_t>&& pcm_data, uint32_t timestamp = 0);
 
     uint64_t GetCurrentPlayTimestamp() const { return current_play_timestamp_.load(); }
+    size_t GetPlayQueueLength() const { return audio_playback_queue_.size(); }
 
 private:
     AudioCodec* codec_ = nullptr;

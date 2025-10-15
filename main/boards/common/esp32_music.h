@@ -39,6 +39,8 @@ private:
     std::string last_downloaded_data_;
     std::string current_music_url_;
     std::string current_song_name_;
+    int current_song_id_ = 0;
+    int current_quota_ = 0;
     bool song_name_displayed_;
     
     // 歌词相关
@@ -60,14 +62,15 @@ private:
     std::atomic<bool> force_stop_{false};
     uint32_t current_play_time_ms_;  // 当前播放时间(毫秒)
     int total_frames_decoded_;      // 已解码的帧数
+    size_t total_downloaded_ = 0; // 已下载的字节数
 
     // 音频缓冲区
     std::queue<AudioChunk> audio_buffer_;
     std::mutex buffer_mutex_;
     std::condition_variable buffer_cv_;
     size_t buffer_size_ = 0;
-    static constexpr size_t MAX_BUFFER_SIZE = 256 * 1024;  // 256KB缓冲区（降低以减少brownout风险）
-    static constexpr size_t MIN_BUFFER_SIZE = 32 * 1024;   // 32KB最小播放缓冲（降低以减少brownout风险）
+    static constexpr size_t MAX_BUFFER_SIZE = 64 * 1024;  // 256KB缓冲区（降低以减少brownout风险）
+    static constexpr size_t MIN_BUFFER_SIZE = 16 * 1024;   // 32KB最小播放缓冲（降低以减少brownout风险）
     
     // MP3解码器相关
     HMP3Decoder mp3_decoder_;
@@ -101,6 +104,10 @@ private:
     std::atomic<bool> is_loop_playing_{false};  // 是否正在循环播放
     TaskHandle_t loop_play_task_handle_ = nullptr;  // 循环播放任务句柄
     void LoopPlayTask();
+
+    // 固定大小的单声道转换缓冲区
+    static constexpr size_t MAX_MONO_SAMPLES = 1152;
+    int16_t mono_buffer_[MAX_MONO_SAMPLES];
 
 public:
     Esp32Music();
