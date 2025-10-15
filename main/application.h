@@ -73,6 +73,8 @@ public:
     AlarmManager* alarm_m_ = nullptr;
     // music
     Esp32Music* music_ = nullptr;
+    bool music_playing_ = false; // 音乐播放状态
+    void FlushConversationQueue();
 
 private:
     Application();
@@ -108,7 +110,6 @@ private:
     std::vector<ConversationRecord> conversation_queue_;
     static const size_t max_queue_size_ = 50; // 最大对话队列长度，50条：75KB
     void AddConversationToQueue();
-    void FlushConversationQueue();
 };
 
 

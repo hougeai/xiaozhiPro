@@ -458,14 +458,15 @@ void Esp32Music::PlayAudioStream() {
     auto codec = Board::GetInstance().GetAudioCodec();
     int target_sample_rate = codec->output_sample_rate();
     auto& app = Application::GetInstance();
+    // 设置音乐播放状态为true
+    app.music_playing_ = true;
     // 断开与服务端的连接，确保音频通道关闭
     app.Schedule([&app]() {
         Protocol* protocol = app.GetProtocol();
         if (protocol && protocol->IsAudioChannelOpened()) {
             protocol->CloseAudioChannel();
         }
-        app.SetDeviceState(kDeviceStateIdle);
-        ESP_LOGI(TAG, "DeviceStateIdle, disconnected to server");
+        ESP_LOGI(TAG, "Playing Music, closing audio channel");
     });
     
     vTaskDelay(pdMS_TO_TICKS(300));
@@ -656,6 +657,9 @@ void Esp32Music::PlayAudioStream() {
         SendPlayHistory(current_song_id_);
         current_song_id_ = 0;
     }
+    app.music_playing_ = false;
+    app.FlushConversationQueue();
+    ESP_LOGI(TAG, "Music playback finished, set DeviceStateIdle");
 }
 
 // 清空音频缓冲区
@@ -1167,7 +1171,11 @@ bool Esp32Music::StopLoopPlay() {
         SendPlayHistory(current_song_id_);
         current_song_id_ = 0;
     }
-    
+    // 给app发送播放完成消息
+    auto& app = Application::GetInstance();
+    app.music_playing_ = false;
+    app.FlushConversationQueue();
+
     // music_collection_.clear(); // 不清空，下次接着播放
     // current_song_index_ = 0;
     ESP_LOGI(TAG, "Loop play stopped, will resume from song %d next time", current_song_index_ + 1);
@@ -1186,6 +1194,10 @@ std::string Esp32Music::PlayNextSong() {
     if (music_collection_.empty()) {
         ESP_LOGW(TAG, "Music collection is empty");
         return "当前设备歌单为空";
+    }
+    if (current_quota_ <= 0) {
+        ESP_LOGW(TAG, "Quota exhausted");
+        return "今天歌曲播放配额已用完";
     } 
     // 更新索引到下一首歌曲
     current_song_index_ = (current_song_index_ + 1) % music_collection_.size();

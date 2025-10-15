@@ -754,7 +754,10 @@ void Application::SetDeviceState(DeviceState state) {
             display->SetEmotion("neutral");
             audio_service_.EnableVoiceProcessing(false);
             audio_service_.EnableWakeWordDetection(true);
-            FlushConversationQueue();
+            // 只有在非音乐播放状态下才刷新对话队列
+            if (!music_playing_) {
+                FlushConversationQueue();
+            }
             break;
         case kDeviceStateConnecting:
             display->SetStatus(Lang::Strings::CONNECTING);
