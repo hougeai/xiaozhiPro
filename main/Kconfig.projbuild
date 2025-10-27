@@ -2,13 +2,13 @@ menu "Xiaozhi Assistant"
 
 config SERVER_URL
     string "XiaozhiPro Server URL"
-    default "https://ybakxm--3002.app.cloudstudio.work"
+    default "http://1.95.14.72:3002"
     help
         The base URL for XiaozhiPro server including upload_conversations and get_code endpoints
 
 config OTA_URL
     string "Default OTA URL"
-    default "https://api.tenclass.net/xiaozhi/ota/"
+    default "http://1.95.14.72:3002/ota"
     help
         The application will access this URL to check for new firmwares and server address.
 
@@ -394,6 +394,9 @@ choice BOARD_TYPE
         depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_AI_4G
         bool "AI-4G（ML307 AT）"
+        depends on IDF_TARGET_ESP32S3
+    config BOARD_TYPE_AI_4G_DISPLAY
+        bool "AI-4G-DISPLAY（ML307 AT）"
         depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_WTP4C5MP07S
         bool "Wireless-Tag WTP4C5MP07S"

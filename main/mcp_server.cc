@@ -18,6 +18,8 @@
 #include "settings.h"
 #include "lvgl_theme.h"
 #include "lvgl_display.h"
+#include "system_info.h"
+#include "led/gpio_led.h" 
 
 #define TAG "MCP"
 
@@ -121,7 +123,37 @@ void McpServer::AddCommonTools() {
             });
     }
 #endif
-
+    
+    // led
+    auto led = board.GetManualLed();
+    auto gpio_led = dynamic_cast<GpioLed*>(led);
+    if (gpio_led) {
+        AddTool("self.led.turn_on",
+            "Turn on the built-in LED",
+            PropertyList(),
+            [gpio_led](const PropertyList& properties) -> ReturnValue {
+                gpio_led->SetBrightness(50); 
+                gpio_led->TurnOn();
+                return true;
+            });    
+        AddTool("self.led.turn_off",
+            "Turn off the built-in LED",
+            PropertyList(),
+            [gpio_led](const PropertyList& properties) -> ReturnValue {
+                gpio_led->TurnOff();
+                return true;
+            });
+        AddTool("self.led.set_brightness",
+            "Set the brightness of the built-in LED",
+            PropertyList({
+                Property("brightness", kPropertyTypeInteger, 0, 100)
+            }),
+            [gpio_led](const PropertyList& properties) -> ReturnValue {
+                uint8_t brightness = static_cast<uint8_t>(properties["brightness"].value<int>());
+                gpio_led->SetBrightness(brightness);
+                return true;
+            });
+    }
     // alarm
     AddTool("self.alarm.set",
         "为用户添加各种闹钟提醒功能，比如：帮我定一个10分钟的闹钟；20秒后提醒我关煤气炉；每天下午2点提醒我吃药"
@@ -234,7 +266,7 @@ void McpServer::AddCommonTools() {
         });
     // knowledge base
     AddTool("self.kb.query",
-        "当用户咨询硅基流动产品相关内容时，可以通过关键词检索知识库获取更多的上下文"
+        "当用户咨询的问题超出你的认知范围，不可胡编乱造，可以通过关键词检索知识库获取更多的上下文"
         "Args:"
         "query: str, 搜索的关键词，多个关键词用空格隔开",
         PropertyList({
@@ -243,58 +275,60 @@ void McpServer::AddCommonTools() {
         [](const PropertyList& properties) -> ReturnValue {
             auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
             http->SetHeader("Content-Type", "application/json");
-            http->SetHeader("X-API-Key", "sk-Xea7HELObS3gYurLAgC-nepXSZdT6m3CwkV6nYqSxePRzdTa");
+            http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
             // 构造请求的JSON数据
             cJSON* json_data = cJSON_CreateObject();
-            cJSON_AddStringToObject(json_data, "query_text", properties["query"].value<std::string>().c_str());
-            cJSON_AddNumberToObject(json_data, "vector_threshold", 0.5);
-            cJSON_AddNumberToObject(json_data, "keyword_threshold", 0.3);
-            cJSON_AddNumberToObject(json_data, "match_count", 3);
+            cJSON_AddStringToObject(json_data, "query", properties["query"].value<std::string>().c_str());
             char* json_string = cJSON_PrintUnformatted(json_data);
             std::string data(json_string);
             cJSON_free(json_string);
             cJSON_Delete(json_data);
             http->SetContent(std::move(data));
-            if (!http->Open("GET", "http://106.55.224.164:3008/api/v1/knowledge-bases/kb-00000001/hybrid-search")) {
+            std::string base_url = std::string(CONFIG_SERVER_URL) + "/kb_search";
+    
+            if (!http->Open("POST", base_url)) {
                 ESP_LOGE(TAG, "Failed to open HTTP connection");
                 return R"({"success":false,"message":"Failed to connect to knowledge base"})";
             }
-            auto status_code = http->GetStatusCode();
+            int status_code = http->GetStatusCode();
+            std::string response = http->ReadAll();
+            cJSON* root = cJSON_Parse(response.c_str());
+            http->Close();
             if (status_code != 200) {
                 ESP_LOGE(TAG, "Knowledge base request failed with status code: %d", status_code);
+                if (root) {
+                    cJSON* msg = cJSON_GetObjectItem(root, "msg");
+                    std::string error_msg = msg ? msg->valuestring : "Unknown error";
+                    ESP_LOGE(TAG, "Knowledge base error message: %s", error_msg.c_str());
+                    cJSON_Delete(root);
+                    return std::string(R"({"success":false,"message":")" + error_msg + R"("})");
+                }
                 return R"({"success":false,"message":"Knowledge base request failed"})";
             }
-            std::string response = http->ReadAll();
-            http->Close();
-            // 解析响应并提取需要的数据
-            cJSON* root = cJSON_Parse(response.c_str());
-            if (root == nullptr) {
+            
+            if (!root) {
                 ESP_LOGE(TAG, "Failed to parse knowledge base response");
                 return R"({"success":false,"message":"Failed to parse knowledge base response"})";
             }
-            
             cJSON* data_array = cJSON_GetObjectItem(root, "data");
             if (!cJSON_IsArray(data_array)) {
                 cJSON_Delete(root);
                 ESP_LOGE(TAG, "Invalid data format in knowledge base response");
                 return R"({"success":false,"message":"Invalid data format in knowledge base response"})";
             }
-            // 创建只包含content字段的简单数组
-            cJSON* content_array = cJSON_CreateArray();
-            int array_size = cJSON_GetArraySize(data_array);
-            for (int i = 0; i < array_size && i < 3; i++) { // 只取前3个结果
-                cJSON* item = cJSON_GetArrayItem(data_array, i);
-                if (item) {
-                    cJSON* content = cJSON_GetObjectItem(item, "content");
-                    if (content) {
-                        cJSON_AddItemToArray(content_array, cJSON_CreateString(content->valuestring));
-                    }
-                }
+            if (cJSON_GetArraySize(data_array) == 0) {
+                cJSON_Delete(root);
+                ESP_LOGW(TAG, "No data found in knowledge base response");
+                return R"({"success":true,"message":"未找到匹配结果，请尝试更换更相关的关键词重试"})";
             }
+            // 直接将data内容转换为字符串返回
+            char* data_json = cJSON_PrintUnformatted(data_array);
+            std::string data_str(data_json);
+            cJSON_free(data_json);
             cJSON_Delete(root);
             // 构造简化后的响应
             cJSON* result = cJSON_CreateObject();
-            cJSON_AddItemToObject(result, "contents", content_array);
+            cJSON_AddItemToObject(result, "data", cJSON_CreateString(data_str.c_str()));
             cJSON_AddBoolToObject(result, "success", true);
             char* result_json = cJSON_PrintUnformatted(result);
             std::string result_str(result_json);

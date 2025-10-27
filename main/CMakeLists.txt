@@ -15,6 +15,7 @@ set(SOURCES "audio/audio_codec.cc"
             "display/display.cc"
             "display/lcd_display.cc"
             "display/oled_display.cc"
+            "display/oled_display_custom.cc"
             "display/lvgl_display/lvgl_display.cc"
             "display/emote_display.cc"
             "display/lvgl_display/emoji_collection.cc"
@@ -510,6 +511,8 @@ elseif(CONFIG_BOARD_TYPE_YUNLIAO_S3)
     set(DEFAULT_EMOJI_COLLECTION twemoji_64)
 elseif(CONFIG_BOARD_TYPE_AI_4G)
     set(BOARD_TYPE "ai-4g")
+elseif(CONFIG_BOARD_TYPE_AI_4G_DISPLAY)
+    set(BOARD_TYPE "ai-4g-display")
 elseif(CONFIG_BOARD_TYPE_WTP4C5MP07S)
     set(BOARD_TYPE "wireless-tag-wtp4c5mp07s")
     set(BUILTIN_TEXT_FONT font_puhui_basic_30_4)
