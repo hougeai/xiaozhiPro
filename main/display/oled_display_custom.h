@@ -1,5 +1,4 @@
 #ifndef OLED_DISPLAY_CUSTOM_H
-#define OLED_DISPLAY_CUSTOM_H
 
 #include "lvgl_display.h"
 #include <esp_lcd_panel_io.h>
@@ -22,6 +21,18 @@ private:
     // 添加电池文本标签
     lv_obj_t* battery_text_label_ = nullptr;
 
+    // 添加用于显示天气和时间信息的标签
+    lv_obj_t* idle_labels_[8] = {nullptr}; // 待机信息标签
+    // 翻页参数
+    int current_idle_page_ = 0;
+    int total_idle_pages_ = 0;
+    int items_per_page_ = 2;  // 每页显示2条信息
+    // 存储待机信息的成员变量
+    std::string idle_info_texts_[8];
+    std::vector<int> valid_idle_indices_;
+    int refresh_interval_ = 15; // 默认刷新间隔
+    bool idle_info_loaded_ = false; // 标记是否已加载待机信息
+
     virtual bool Lock(int timeout_ms = 0) override;
     virtual void Unlock() override;
 
@@ -37,9 +48,12 @@ public:
     virtual void SetEmotion(const char* emotion) override;
     virtual void SetTheme(Theme* theme) override;
     virtual void UpdateStatusBar(bool update_all = false) override;
-
-private:
+    // 显示待机信息
+    void ShowIdleInfo();
+    void HideIdleInfo();
+    void LoadIdleInfoSettings(); // 加载设置
     const char* GetBatteryText(int battery_level, bool charging);
+    void SetLabelScrollSpeed(lv_obj_t* label, int px_per_sec);
 };
 
 #endif // OLED_DISPLAY_CUSTOM_H

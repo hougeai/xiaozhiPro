@@ -44,24 +44,24 @@ public:
         uint16_t soc_raw = (uint16_t)read_buffer_[0] | ((uint16_t)read_buffer_[1] << 8);
         // 转换为实际百分比
         float soc = soc_raw / 256.0f;
-        ESP_LOGI(TAG, "Battery level(raw): %.1f%%", soc);
+        // ESP_LOGI(TAG, "Battery level(raw): %.1f%%", soc);
         // 限制范围，防止意外超出
         if (soc > 100.0f) soc = 100.0f;
         if (soc < 0.0f) soc = 0.0f;
         // 保存到成员变量，可选是否保留小数
         battery_level_ = static_cast<uint8_t>(soc + 0.5f);  // 四舍五入成整数%
-        ESP_LOGI(TAG, "Battery level(final): %d%%", battery_level_);
+        // ESP_LOGI(TAG, "Battery level(final): %d%%", battery_level_);
         // 读取电压寄存器
         ReadRegs(0x08, read_buffer_, 2);
-        int16_t voltage = static_cast<uint16_t>(read_buffer_[1] << 8 | read_buffer_[0]);
-        ESP_LOGI(TAG, "Battery voltage: %d mV", voltage);
+        // int16_t voltage = static_cast<uint16_t>(read_buffer_[1] << 8 | read_buffer_[0]);
+        // ESP_LOGI(TAG, "Battery voltage: %d mV", voltage);
         // 读取电流寄存器，判断充电状态
         ReadRegs(0x0c, read_buffer_ + 2, 2);
         int16_t current = static_cast<int16_t>(read_buffer_[3] << 8 | read_buffer_[2]);
         // 如果电流为正，表示正在充电；如果为负，表示正在放电
         is_charging_ = (current > 10);  // 10mA阈值，避免微小电流干扰
         is_discharging_ = (current < -10);
-        ESP_LOGI(TAG, "Battery current: %d mA is_charging: %d is_discharging: %d", current, is_charging_, is_discharging_);
+        // ESP_LOGI(TAG, "Battery current: %d mA is_charging: %d is_discharging: %d", current, is_charging_, is_discharging_);
     }
     
     int GetBatteryLevel() const { return battery_level_; }
