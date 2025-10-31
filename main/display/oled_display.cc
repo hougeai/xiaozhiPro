@@ -2,7 +2,11 @@
 #include "assets/lang_config.h"
 #include "lvgl_theme.h"
 #include "lvgl_font.h"
-
+#include "board.h"
+#include "application.h"
+#include "audio_codec.h"
+#include "settings.h"
+#include "system_info.h"
 #include <string>
 #include <algorithm>
 
@@ -77,8 +81,11 @@ OledDisplay::OledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handl
     }
 
     if (height_ == 64) {
+        screen_type_ = SCREEN_128X64;
         SetupUI_128x64();
     } else {
+        screen_type_ = SCREEN_128X32;
+        items_per_page_ = 1;
         SetupUI_128x32();
     }
 }
@@ -248,6 +255,20 @@ void OledDisplay::SetupUI_128x64() {
     lv_obj_set_style_text_color(low_battery_label_, lv_color_white(), 0);
     lv_obj_center(low_battery_label_);
     lv_obj_add_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN);
+
+    // 创建用于待机状态显示信息的标签，默认隐藏
+    for (int i = 0; i < 8; i++) {
+        idle_labels_[i] = lv_label_create(content_);
+        lv_label_set_text(idle_labels_[i], "");
+        lv_label_set_long_mode(idle_labels_[i], LV_LABEL_LONG_SCROLL_CIRCULAR);
+        lv_obj_set_width(idle_labels_[i], width_);
+        lv_obj_set_style_text_align(idle_labels_[i], LV_TEXT_ALIGN_CENTER, 0); // 居中显示
+        // 减少标签的垂直内边距
+        lv_obj_set_style_pad_top(idle_labels_[i], 0, 0);
+        lv_obj_set_style_pad_bottom(idle_labels_[i], 0, 0);
+        lv_obj_add_flag(idle_labels_[i], LV_OBJ_FLAG_HIDDEN);
+        // show会重新计算标签动画，不再为每个标签设置滚动动画
+    }
 }
 
 void OledDisplay::SetupUI_128x32() {
@@ -335,6 +356,17 @@ void OledDisplay::SetupUI_128x32() {
     lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
     lv_obj_set_style_anim(chat_message_label_, &a, LV_PART_MAIN);
     lv_obj_set_style_anim_duration(chat_message_label_, lv_anim_speed_clamped(60, 300, 60000), LV_PART_MAIN);
+    // 为128x32屏幕创建idle信息标签
+    for (int i = 0; i < 8; i++) {
+        idle_labels_[i] = lv_label_create(side_bar_);
+        lv_label_set_text(idle_labels_[i], "");
+        lv_label_set_long_mode(idle_labels_[i], LV_LABEL_LONG_SCROLL_CIRCULAR);
+        lv_obj_set_width(idle_labels_[i], width_ - 32);
+        lv_obj_set_style_text_align(idle_labels_[i], LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_pad_top(idle_labels_[i], 0, 0);
+        lv_obj_set_style_pad_bottom(idle_labels_[i], 0, 0);
+        lv_obj_add_flag(idle_labels_[i], LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 void OledDisplay::SetEmotion(const char* emotion) {
@@ -358,4 +390,361 @@ void OledDisplay::SetTheme(Theme* theme) {
 
     auto screen = lv_screen_active();
     lv_obj_set_style_text_font(screen, text_font, 0);
+}
+
+void OledDisplay::UpdateStatusBar(bool update_all) {
+    auto& app = Application::GetInstance();
+    auto& board = Board::GetInstance();
+    auto codec = board.GetAudioCodec();
+
+    // Update mute icon
+    {
+        DisplayLockGuard lock(this);
+        if (mute_label_ == nullptr) {
+            return;
+        }
+
+        // 如果静音状态改变，则更新图标
+        if (codec->output_volume() == 0 && !muted_) {
+            muted_ = true;
+            lv_label_set_text(mute_label_, FONT_AWESOME_VOLUME_XMARK);
+        } else if (codec->output_volume() > 0 && muted_) {
+            muted_ = false;
+            lv_label_set_text(mute_label_, "");
+        }
+    }
+
+    // 设备空闲状态时更新时间显示：每 10 秒更新一次时间显示，设置到状态标签
+    if (app.GetDeviceState() == kDeviceStateIdle) {
+        if (last_status_update_time_ + std::chrono::seconds(10) < std::chrono::system_clock::now()) {
+            // Set status to clock "HH:MM"
+            time_t now = time(NULL);
+            struct tm* tm = localtime(&now);
+            // Check if the we have already set the time
+            if (tm->tm_year >= 2025 - 1900) {
+                char time_str[16];
+                strftime(time_str, sizeof(time_str), "%H:%M  ", tm);
+                SetStatus(time_str);
+            } else {
+                ESP_LOGW(TAG, "System time is not set, tm_year: %d", tm->tm_year);
+            }
+        }
+        if (update_all || idle_counter_++ % refresh_interval_ == 0) {
+            ShowIdleInfo();
+        }
+    } else {
+        // 在非空闲状态隐藏待机信息
+        HideIdleInfo();
+        current_idle_page_ = 0;
+        idle_counter_ = 0;
+    }
+
+    // 更新电池图标
+    int battery_level;
+    bool charging, discharging;
+    const char* icon = nullptr;
+    if (board.GetBatteryLevel(battery_level, charging, discharging)) {
+        if (charging) {
+            icon = FONT_AWESOME_BATTERY_BOLT;
+        } else {
+            const char* levels[] = {
+                FONT_AWESOME_BATTERY_EMPTY, // 0-19%
+                FONT_AWESOME_BATTERY_QUARTER,    // 20-39%
+                FONT_AWESOME_BATTERY_HALF,    // 40-59%
+                FONT_AWESOME_BATTERY_THREE_QUARTERS,    // 60-79%
+                FONT_AWESOME_BATTERY_FULL, // 80-99%
+                FONT_AWESOME_BATTERY_FULL, // 100%
+            };
+            icon = levels[battery_level / 20];
+        }
+        DisplayLockGuard lock(this);
+        if (battery_label_ != nullptr && battery_icon_ != icon) {
+            battery_icon_ = icon;
+            lv_label_set_text(battery_label_, battery_icon_);
+        }
+
+        if (low_battery_popup_ != nullptr) {
+            if (strcmp(icon, FONT_AWESOME_BATTERY_EMPTY) == 0 && discharging) {
+                if (lv_obj_has_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN)) { // 如果低电量提示框隐藏，则显示
+                    lv_obj_remove_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN);
+                    app.PlaySound(Lang::Sounds::OGG_LOW_BATTERY);
+                }
+            } else {
+                // Hide the low battery popup when the battery is not empty
+                if (!lv_obj_has_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN)) { // 如果低电量提示框显示，则隐藏
+                    lv_obj_add_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN);
+                }
+            }
+        }
+    }
+
+    // 每 10 秒更新一次网络图标
+    static int seconds_counter = 0;
+    if (update_all || seconds_counter++ % 10 == 0) {
+        // 升级固件时，不读取 4G 网络状态，避免占用 UART 资源
+        auto device_state = Application::GetInstance().GetDeviceState();
+        static const std::vector<DeviceState> allowed_states = {
+            kDeviceStateIdle,
+            kDeviceStateStarting,
+            kDeviceStateWifiConfiguring,
+            kDeviceStateListening,
+            kDeviceStateActivating,
+        };
+        if (std::find(allowed_states.begin(), allowed_states.end(), device_state) != allowed_states.end()) {
+            const char* icon = board.GetNetworkStateIcon();
+            if (network_label_ != nullptr && icon != nullptr && network_icon_ != icon) {
+                DisplayLockGuard lock(this);
+                network_icon_ = icon;
+                lv_label_set_text(network_label_, network_icon_);
+            }
+        }
+    }
+
+    esp_pm_lock_release(pm_lock_);
+}
+
+void OledDisplay::ShowIdleInfo() {   
+    DisplayLockGuard lock(this);
+
+    // 第一次显示待机信息时加载设置
+    if (!idle_info_loaded_) {
+        LoadIdleInfoSettings();
+        idle_info_loaded_ = true;
+    }
+    // 先隐藏所有标签
+    for (int i = 0; i < 8; i++) {
+        if (idle_labels_[i] != nullptr) {
+            lv_obj_add_flag(idle_labels_[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if (screen_type_ == SCREEN_128X64) {
+        // 隐藏聊天和表情区域
+        if (content_left_ != nullptr) {
+            lv_obj_add_flag(content_left_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (content_right_ != nullptr) {
+            lv_obj_add_flag(content_right_, LV_OBJ_FLAG_HIDDEN);
+        }
+
+        if (valid_idle_indices_.empty()) {
+            // 没有标签信息时，显示左侧表情符号区域并居中
+            if (content_left_ != nullptr) {
+                lv_obj_remove_flag(content_left_, LV_OBJ_FLAG_HIDDEN);
+            }
+            // 恢复content_的布局设置使左侧区域居中
+            lv_obj_set_flex_flow(content_, LV_FLEX_FLOW_ROW);
+            lv_obj_set_style_flex_main_place(content_, LV_FLEX_ALIGN_CENTER, 0);
+            ESP_LOGI(TAG, "No idle info to display, showing emotion icon only");
+            return;
+        }
+        // 如果有可见标签，调整content_的布局以适应垂直排列
+        total_idle_pages_ = (valid_idle_indices_.size() + items_per_page_ - 1) / items_per_page_;
+        // 显示当前页的标签
+        int start_idx = current_idle_page_ * items_per_page_;
+        int end_idx = std::min(start_idx + items_per_page_, (int)valid_idle_indices_.size());
+        for (int i = start_idx; i < end_idx; i++) {
+            int label_idx = valid_idle_indices_[i];
+            if (idle_labels_[label_idx] != nullptr) {
+                lv_label_set_text(idle_labels_[label_idx], idle_info_texts_[label_idx].c_str());
+                SetLabelScrollSpeed(idle_labels_[i], 30);
+                lv_obj_remove_flag(idle_labels_[label_idx], LV_OBJ_FLAG_HIDDEN);
+                ESP_LOGI(TAG, "Displaying idle info label %d (page %d): %s", 
+                        label_idx, current_idle_page_, idle_info_texts_[label_idx].c_str());
+            }
+        }
+        
+        // 切换到下一页
+        current_idle_page_ = (current_idle_page_ + 1) % total_idle_pages_;
+        // 更新content_的布局
+        lv_obj_set_flex_flow(content_, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_flex_main_place(content_, LV_FLEX_ALIGN_START, 0);
+    } else if (screen_type_ == SCREEN_128X32) {
+        if (valid_idle_indices_.empty()) {
+            for (int i = 0; i < 8; i++) {
+                if (idle_labels_[i] != nullptr) {
+                    lv_obj_add_flag(idle_labels_[i], LV_OBJ_FLAG_HIDDEN);
+                }
+            }
+            return;
+        }
+        // 隐藏聊天消息标签
+        if (chat_message_label_ != nullptr) {
+            lv_obj_add_flag(chat_message_label_, LV_OBJ_FLAG_HIDDEN);
+        }
+        // 计算总页数
+        total_idle_pages_ = (valid_idle_indices_.size() + items_per_page_ - 1) / items_per_page_;
+        // 显示当前页的标签
+        int start_idx = current_idle_page_ * items_per_page_;
+        int end_idx = std::min(start_idx + items_per_page_, (int)valid_idle_indices_.size());
+        for (int i = start_idx; i < end_idx; i++) {
+            int label_idx = valid_idle_indices_[i];
+            if (idle_labels_[label_idx] != nullptr) {
+                lv_label_set_text(idle_labels_[label_idx], idle_info_texts_[label_idx].c_str());
+                SetLabelScrollSpeed(idle_labels_[label_idx], 30);
+                lv_obj_remove_flag(idle_labels_[label_idx], LV_OBJ_FLAG_HIDDEN);
+                ESP_LOGI(TAG, "Displaying idle info label %d (page %d): %s", 
+                        label_idx, current_idle_page_, idle_info_texts_[label_idx].c_str());
+            }
+        }
+        // 切换到下一页
+        current_idle_page_ = (current_idle_page_ + 1) % total_idle_pages_;
+    }
+    ESP_LOGI(TAG, "Switched to idle info display with %d labels", valid_idle_indices_.size());
+}
+
+void OledDisplay::HideIdleInfo() {
+    DisplayLockGuard lock(this);
+    // 隐藏待机信息标签
+    for (int i = 0; i < 8; i++) {
+        if (idle_labels_[i] != nullptr) {
+            lv_obj_add_flag(idle_labels_[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if (screen_type_ == SCREEN_128X64) {
+        // 恢复聊天布局
+        if (content_left_ != nullptr) {
+            lv_obj_remove_flag(content_left_, LV_OBJ_FLAG_HIDDEN);
+        }
+        
+        // 恢复content_的布局设置
+        lv_obj_set_flex_flow(content_, LV_FLEX_FLOW_ROW);
+        lv_obj_set_style_flex_main_place(content_, LV_FLEX_ALIGN_CENTER, 0);
+    }  else if (screen_type_ == SCREEN_128X32) {
+        if (chat_message_label_ != nullptr) {
+            lv_obj_remove_flag(chat_message_label_, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+void OledDisplay::LoadIdleInfoSettings() {
+    ESP_LOGI(TAG, "Loading idle info settings via network request");
+    // 获取网络实例
+    auto http = Board::GetInstance().GetNetwork()->CreateHttp(2);
+    if (!http) {
+        ESP_LOGE(TAG, "Failed to create HTTP client for display info");
+        return;
+    }
+    http->SetHeader("Content-Type", "application/json");
+    http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
+    std::string url = std::string(CONFIG_SERVER_URL) + "/device_display";
+    ESP_LOGI(TAG, "Fetching display info from: %s", url.c_str());
+    
+    if (http->Open("GET", url)) {
+        int status_code = http->GetStatusCode();
+        if (status_code == 200) {
+            std::string response = http->ReadAll();
+            ESP_LOGI(TAG, "Successfully fetched display info");
+            // 解析JSON响应
+            cJSON* root = cJSON_Parse(response.c_str());
+            if (root) {
+                cJSON* data_obj = cJSON_GetObjectItem(root, "data");
+                if (data_obj) {
+                    // 解析并保存天气信息
+                    cJSON* weather_obj = cJSON_GetObjectItem(data_obj, "weather");
+                    if (weather_obj) {
+                        cJSON* weather_str = cJSON_GetObjectItem(weather_obj, "weather");
+                        if (weather_str) {
+                            idle_info_texts_[0] = std::string(weather_str->valuestring);
+                            ESP_LOGI(TAG, "Loaded weather: %s", weather_str->valuestring);
+                        }
+                        cJSON* aqi_str = cJSON_GetObjectItem(weather_obj, "aqi");
+                        if (aqi_str) {
+                            idle_info_texts_[1] = std::string(aqi_str->valuestring);
+                            ESP_LOGI(TAG, "Loaded aqi: %s", aqi_str->valuestring);
+                        }
+                    }
+                    // 解析并保存时间信息
+                    cJSON* timeday_obj = cJSON_GetObjectItem(data_obj, "timeday");
+                    if (timeday_obj) {
+                        cJSON* day_y_item = cJSON_GetObjectItem(timeday_obj, "day_y");
+                        if (day_y_item) {
+                            idle_info_texts_[2] = std::string(day_y_item->valuestring);
+                            ESP_LOGI(TAG, "Loaded day_y: %s", day_y_item->valuestring);
+                        }
+                        
+                        cJSON* day_n_item = cJSON_GetObjectItem(timeday_obj, "day_n");
+                        if (day_n_item) {
+                            idle_info_texts_[3] = std::string(day_n_item->valuestring);
+                            ESP_LOGI(TAG, "Loaded day_n: %s", day_n_item->valuestring);
+                        }
+                        
+                        cJSON* wuhou_item = cJSON_GetObjectItem(timeday_obj, "wuhou");
+                        if (wuhou_item) {
+                            idle_info_texts_[4] = std::string(wuhou_item->valuestring);
+                            ESP_LOGI(TAG, "Loaded wuhou: %s", wuhou_item->valuestring);
+                        }
+                        
+                        cJSON* xiuluck_item = cJSON_GetObjectItem(timeday_obj, "xiuluck");
+                        if (xiuluck_item) {
+                            idle_info_texts_[5] = std::string(xiuluck_item->valuestring);
+                            ESP_LOGI(TAG, "Loaded xiuluck: %s", xiuluck_item->valuestring);
+                        }
+                        
+                        cJSON* yiji_item = cJSON_GetObjectItem(timeday_obj, "yiji");
+                        if (yiji_item) {
+                            idle_info_texts_[6] = std::string(yiji_item->valuestring);
+                        }
+                        
+                        cJSON* today_history_item = cJSON_GetObjectItem(timeday_obj, "today_history");
+                        if (today_history_item) {
+                            idle_info_texts_[7] = std::string(today_history_item->valuestring);
+                            ESP_LOGI(TAG, "Loaded today_history: %s", today_history_item->valuestring);
+                        }
+                    }
+                    
+                    // 解析并保存设置信息
+                    cJSON* settings_obj = cJSON_GetObjectItem(data_obj, "settings");
+                    if (settings_obj) {
+                        cJSON* refresh_interval_item = cJSON_GetObjectItem(settings_obj, "refresh_interval");
+                        if (refresh_interval_item) {
+                            refresh_interval_ = refresh_interval_item->valueint;
+                            ESP_LOGI(TAG, "Loaded refresh interval: %d", refresh_interval_);
+                        }
+                    }
+                }
+                cJSON_Delete(root);
+            }
+        } else {
+            ESP_LOGW(TAG, "Server returned status code: %d", status_code);
+        }
+    } else {
+        ESP_LOGE(TAG, "Failed to connect to display info server");
+    }
+    
+    http->Close();
+    
+    // 更新有效索引列表
+    valid_idle_indices_.clear();
+    for (int i = 0; i < 8; i++) {
+        if (!idle_info_texts_[i].empty()) {
+            valid_idle_indices_.push_back(i);
+        }
+    }
+    ESP_LOGI(TAG, "Loaded idle info settings with %d valid entries, refresh interval: %d", 
+             valid_idle_indices_.size(), refresh_interval_);
+}
+
+void OledDisplay::SetLabelScrollSpeed(lv_obj_t* label, int px_per_sec) {
+    if (label == nullptr) return;
+
+    const char* txt = lv_label_get_text(label);
+
+    const lv_font_t* font = lv_obj_get_style_text_font(label, LV_PART_MAIN);
+    int px = lv_txt_get_width(txt, strlen(txt), font, 0);
+    int label_w = lv_obj_get_width(label);
+
+    // 文本长度短于控件宽度时不滚动
+    if (px <= label_w) {
+        lv_obj_set_style_anim_duration(label, 0, LV_PART_MAIN);
+        return;
+    }
+    // 计算动画持续时间：滚动距离 = 文本宽 + 标签宽
+    int duration = (px + label_w) * 1000 / px_per_sec;
+    // 限制 duration 不超过翻页间隔
+    int max_duration = refresh_interval_ * 1000 - 200;
+    if (duration > max_duration) duration = max_duration;
+    // 应用动画时长
+    lv_obj_set_style_anim_duration(label, duration, LV_PART_MAIN);
+    ESP_LOGI(TAG, "SetLabelScrollSpeed: txt='%s' width=%d label_w=%d duration=%dms",
+             txt, px, label_w, duration);
 }

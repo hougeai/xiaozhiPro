@@ -82,8 +82,11 @@ CustomOledDisplay::CustomOledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd
     }
 
     if (height_ == 64) {
+        screen_type_ = SCREEN_128X64;
         SetupUI_128x64();
     } else {
+        screen_type_ = SCREEN_128X32;
+        items_per_page_ = 1;
         SetupUI_128x32();
     }
 }
@@ -274,7 +277,7 @@ void CustomOledDisplay::SetupUI_128x32() {
     auto screen = lv_screen_active();
     lv_obj_set_style_text_font(screen, text_font, 0);
 
-    /* Container */
+    /* Container 整个屏幕容器，横向流式布局 */
     container_ = lv_obj_create(screen);
     lv_obj_set_size(container_, LV_HOR_RES, LV_VER_RES);
     lv_obj_set_flex_flow(container_, LV_FLEX_FLOW_ROW);
@@ -284,7 +287,7 @@ void CustomOledDisplay::SetupUI_128x32() {
     // 减少容器内元素之间的间距
     lv_obj_set_style_pad_row(container_, 0, 0);
 
-    /* Emotion label on the left side */
+    /* Emotion label on the left side 左侧 32x32 区域 */
     content_ = lv_obj_create(container_);
     lv_obj_set_size(content_, 32, 32);
     lv_obj_set_style_pad_all(content_, 0, 0);
@@ -296,7 +299,7 @@ void CustomOledDisplay::SetupUI_128x32() {
     lv_label_set_text(emotion_label_, FONT_AWESOME_MICROCHIP_AI);
     lv_obj_center(emotion_label_);
 
-    /* Right side */
+    /* Right side：右侧占据剩余宽度的区域，采用纵向流式布局，包含状态栏和聊天消息 */
     side_bar_ = lv_obj_create(container_);
     lv_obj_set_size(side_bar_, width_ - 32, 32);
     lv_obj_set_flex_flow(side_bar_, LV_FLEX_FLOW_COLUMN);
@@ -305,7 +308,7 @@ void CustomOledDisplay::SetupUI_128x32() {
     lv_obj_set_style_radius(side_bar_, 0, 0);
     lv_obj_set_style_pad_row(side_bar_, 0, 0);
 
-    /* Status bar */
+    /* Status bar：右侧顶部 96x16 包含多个标签 */
     status_bar_ = lv_obj_create(side_bar_);
     lv_obj_set_size(status_bar_, width_ - 32, 16);
     lv_obj_set_style_radius(status_bar_, 0, 0);
@@ -342,6 +345,7 @@ void CustomOledDisplay::SetupUI_128x32() {
     lv_label_set_text(battery_text_label_, "");
     lv_obj_set_style_text_font(battery_text_label_, text_font, 0);
 
+    // 右侧下方 96x16 聊天消息
     chat_message_label_ = lv_label_create(side_bar_);
     lv_obj_set_size(chat_message_label_, width_ - 32, LV_SIZE_CONTENT);
     lv_obj_set_style_pad_left(chat_message_label_, 2, 0);
@@ -355,6 +359,17 @@ void CustomOledDisplay::SetupUI_128x32() {
     lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
     lv_obj_set_style_anim(chat_message_label_, &a, LV_PART_MAIN);
     lv_obj_set_style_anim_duration(chat_message_label_, lv_anim_speed_clamped(60, 300, 60000), LV_PART_MAIN);
+    // 为128x32屏幕创建idle信息标签
+    for (int i = 0; i < 8; i++) {
+        idle_labels_[i] = lv_label_create(side_bar_);
+        lv_label_set_text(idle_labels_[i], "");
+        lv_label_set_long_mode(idle_labels_[i], LV_LABEL_LONG_SCROLL_CIRCULAR);
+        lv_obj_set_width(idle_labels_[i], width_ - 32);
+        lv_obj_set_style_text_align(idle_labels_[i], LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_pad_top(idle_labels_[i], 0, 0);
+        lv_obj_set_style_pad_bottom(idle_labels_[i], 0, 0);
+        lv_obj_add_flag(idle_labels_[i], LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 // 根据传入的 emotion 字符串获取对应的 FontAwesome 图标并设置到 emotion_label_
@@ -419,14 +434,14 @@ void CustomOledDisplay::UpdateStatusBar(bool update_all) {
                 ESP_LOGW(TAG, "System time is not set, tm_year: %d", tm->tm_year);
             }
         }
-        static int idle_counter = 0;
-        if (update_all || idle_counter++ % refresh_interval_ == 0) {
+        if (update_all || idle_counter_++ % refresh_interval_ == 0) {
             ShowIdleInfo();
         }
     } else {
         // 在非空闲状态隐藏待机信息
         HideIdleInfo();
         current_idle_page_ = 0;
+        idle_counter_ = 0;
     }
 
     // 更新电池信息：获取电池电量、充电和放电状态，更新电池图标和文字，电量低则弹窗
@@ -509,87 +524,117 @@ const char* CustomOledDisplay::GetBatteryText(int battery_level, bool charging) 
     return battery_text;
 }
 
-// ... existing code ...
 void CustomOledDisplay::ShowIdleInfo() {   
     DisplayLockGuard lock(this);
-    
+
     // 第一次显示待机信息时加载设置
     if (!idle_info_loaded_) {
         LoadIdleInfoSettings();
         idle_info_loaded_ = true;
     }
-    
-    // 隐藏聊天和表情区域
-    if (content_left_ != nullptr) {
-        lv_obj_add_flag(content_left_, LV_OBJ_FLAG_HIDDEN);
-    }
-    if (content_right_ != nullptr) {
-        lv_obj_add_flag(content_right_, LV_OBJ_FLAG_HIDDEN);
-    }
-    
-    if (valid_idle_indices_.empty()) {
-        // 没有标签信息时，显示左侧表情符号区域并居中
-        if (content_left_ != nullptr) {
-            lv_obj_remove_flag(content_left_, LV_OBJ_FLAG_HIDDEN);
-        }
-        if (content_right_ != nullptr) {
-            lv_obj_add_flag(content_right_, LV_OBJ_FLAG_HIDDEN);
-        }
-        // 恢复content_的布局设置使左侧区域居中
-        lv_obj_set_flex_flow(content_, LV_FLEX_FLOW_ROW);
-        lv_obj_set_style_flex_main_place(content_, LV_FLEX_ALIGN_CENTER, 0);
-        ESP_LOGI(TAG, "No idle info to display, showing emotion icon only");
-        return;
-    }
-    // 如果有可见标签，调整content_的布局以适应垂直排列
-    total_idle_pages_ = (valid_idle_indices_.size() + items_per_page_ - 1) / items_per_page_;
     // 先隐藏所有标签
     for (int i = 0; i < 8; i++) {
         if (idle_labels_[i] != nullptr) {
             lv_obj_add_flag(idle_labels_[i], LV_OBJ_FLAG_HIDDEN);
         }
     }
-    // 显示当前页的标签
-    int start_idx = current_idle_page_ * items_per_page_;
-    int end_idx = std::min(start_idx + items_per_page_, (int)valid_idle_indices_.size());
-    for (int i = start_idx; i < end_idx; i++) {
-        int label_idx = valid_idle_indices_[i];
-        if (idle_labels_[label_idx] != nullptr) {
-            lv_label_set_text(idle_labels_[label_idx], idle_info_texts_[label_idx].c_str());
-            SetLabelScrollSpeed(idle_labels_[i], 30);
-            lv_obj_remove_flag(idle_labels_[label_idx], LV_OBJ_FLAG_HIDDEN);
-            ESP_LOGI(TAG, "Displaying idle info label %d (page %d): %s", 
-                     label_idx, current_idle_page_, idle_info_texts_[label_idx].c_str());
+    if (screen_type_ == SCREEN_128X64) {
+        // 隐藏聊天和表情区域
+        if (content_left_ != nullptr) {
+            lv_obj_add_flag(content_left_, LV_OBJ_FLAG_HIDDEN);
         }
+        if (content_right_ != nullptr) {
+            lv_obj_add_flag(content_right_, LV_OBJ_FLAG_HIDDEN);
+        }
+
+        if (valid_idle_indices_.empty()) {
+            // 没有标签信息时，显示左侧表情符号区域并居中
+            if (content_left_ != nullptr) {
+                lv_obj_remove_flag(content_left_, LV_OBJ_FLAG_HIDDEN);
+            }
+            // 恢复content_的布局设置使左侧区域居中
+            lv_obj_set_flex_flow(content_, LV_FLEX_FLOW_ROW);
+            lv_obj_set_style_flex_main_place(content_, LV_FLEX_ALIGN_CENTER, 0);
+            ESP_LOGI(TAG, "No idle info to display, showing emotion icon only");
+            return;
+        }
+        // 如果有可见标签，调整content_的布局以适应垂直排列
+        total_idle_pages_ = (valid_idle_indices_.size() + items_per_page_ - 1) / items_per_page_;
+        // 显示当前页的标签
+        int start_idx = current_idle_page_ * items_per_page_;
+        int end_idx = std::min(start_idx + items_per_page_, (int)valid_idle_indices_.size());
+        for (int i = start_idx; i < end_idx; i++) {
+            int label_idx = valid_idle_indices_[i];
+            if (idle_labels_[label_idx] != nullptr) {
+                lv_label_set_text(idle_labels_[label_idx], idle_info_texts_[label_idx].c_str());
+                SetLabelScrollSpeed(idle_labels_[i], 30);
+                lv_obj_remove_flag(idle_labels_[label_idx], LV_OBJ_FLAG_HIDDEN);
+                ESP_LOGI(TAG, "Displaying idle info label %d (page %d): %s", 
+                        label_idx, current_idle_page_, idle_info_texts_[label_idx].c_str());
+            }
+        }
+        
+        // 切换到下一页
+        current_idle_page_ = (current_idle_page_ + 1) % total_idle_pages_;
+        // 更新content_的布局
+        lv_obj_set_flex_flow(content_, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_flex_main_place(content_, LV_FLEX_ALIGN_START, 0);
+    } else if (screen_type_ == SCREEN_128X32) {
+        if (valid_idle_indices_.empty()) {
+            for (int i = 0; i < 8; i++) {
+                if (idle_labels_[i] != nullptr) {
+                    lv_obj_add_flag(idle_labels_[i], LV_OBJ_FLAG_HIDDEN);
+                }
+            }
+            return;
+        }
+        // 隐藏聊天消息标签
+        if (chat_message_label_ != nullptr) {
+            lv_obj_add_flag(chat_message_label_, LV_OBJ_FLAG_HIDDEN);
+        }
+        // 计算总页数
+        total_idle_pages_ = (valid_idle_indices_.size() + items_per_page_ - 1) / items_per_page_;
+        // 显示当前页的标签
+        int start_idx = current_idle_page_ * items_per_page_;
+        int end_idx = std::min(start_idx + items_per_page_, (int)valid_idle_indices_.size());
+        for (int i = start_idx; i < end_idx; i++) {
+            int label_idx = valid_idle_indices_[i];
+            if (idle_labels_[label_idx] != nullptr) {
+                lv_label_set_text(idle_labels_[label_idx], idle_info_texts_[label_idx].c_str());
+                SetLabelScrollSpeed(idle_labels_[label_idx], 30);
+                lv_obj_remove_flag(idle_labels_[label_idx], LV_OBJ_FLAG_HIDDEN);
+                ESP_LOGI(TAG, "Displaying idle info label %d (page %d): %s", 
+                        label_idx, current_idle_page_, idle_info_texts_[label_idx].c_str());
+            }
+        }
+        // 切换到下一页
+        current_idle_page_ = (current_idle_page_ + 1) % total_idle_pages_;
     }
-    
-    // 切换到下一页
-    current_idle_page_ = (current_idle_page_ + 1) % total_idle_pages_;
-    // 更新content_的布局
-    lv_obj_set_flex_flow(content_, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_flex_main_place(content_, LV_FLEX_ALIGN_START, 0);
     ESP_LOGI(TAG, "Switched to idle info display with %d labels", valid_idle_indices_.size());
-    
 }
 
 void CustomOledDisplay::HideIdleInfo() {
     DisplayLockGuard lock(this);
-    
     // 隐藏待机信息标签
-    for (int i = 0; i < 7; i++) {
+    for (int i = 0; i < 8; i++) {
         if (idle_labels_[i] != nullptr) {
             lv_obj_add_flag(idle_labels_[i], LV_OBJ_FLAG_HIDDEN);
         }
     }
-    
-    // 恢复聊天布局
-    if (content_left_ != nullptr) {
-        lv_obj_remove_flag(content_left_, LV_OBJ_FLAG_HIDDEN);
+    if (screen_type_ == SCREEN_128X64) {
+        // 恢复聊天布局
+        if (content_left_ != nullptr) {
+            lv_obj_remove_flag(content_left_, LV_OBJ_FLAG_HIDDEN);
+        }
+        
+        // 恢复content_的布局设置
+        lv_obj_set_flex_flow(content_, LV_FLEX_FLOW_ROW);
+        lv_obj_set_style_flex_main_place(content_, LV_FLEX_ALIGN_CENTER, 0);
+    }  else if (screen_type_ == SCREEN_128X32) {
+        if (chat_message_label_ != nullptr) {
+            lv_obj_remove_flag(chat_message_label_, LV_OBJ_FLAG_HIDDEN);
+        }
     }
-    
-    // 恢复content_的布局设置
-    lv_obj_set_flex_flow(content_, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_flex_main_place(content_, LV_FLEX_ALIGN_CENTER, 0);
 }
 
 void CustomOledDisplay::LoadIdleInfoSettings() {

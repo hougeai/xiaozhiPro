@@ -4,6 +4,12 @@
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
 
+// 屏幕类型枚举
+enum ScreenType {
+    SCREEN_128X64,
+    SCREEN_128X32
+};
+
 class CustomOledDisplay : public LvglDisplay {
 private:
     esp_lcd_panel_io_handle_t panel_io_ = nullptr;
@@ -31,7 +37,9 @@ private:
     std::string idle_info_texts_[8];
     std::vector<int> valid_idle_indices_;
     int refresh_interval_ = 15; // 默认刷新间隔
+    int idle_counter_ = 0;
     bool idle_info_loaded_ = false; // 标记是否已加载待机信息
+    ScreenType screen_type_ = SCREEN_128X64; // 屏幕类型
 
     virtual bool Lock(int timeout_ms = 0) override;
     virtual void Unlock() override;

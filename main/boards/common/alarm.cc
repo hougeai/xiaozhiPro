@@ -526,6 +526,11 @@ std::string AlarmManager::SyncAlarmFromCloud() {
         settings_.SetInt("alarm_rpt_" + std::to_string(i), 0);
         settings_.SetInt("alarm_itv_" + std::to_string(i), 0);
     }
+    if (!alarms_array || !cJSON_IsArray(alarms_array)) {
+        ESP_LOGW(TAG, "No alarms in response or invalid format");
+        cJSON_Delete(root);
+        return "";
+    }
     int alarm_count = cJSON_GetArraySize(alarms_array);
     for (int i = 0; i < alarm_count; i++) {
         cJSON* alarm_json = cJSON_GetArrayItem(alarms_array, i);
