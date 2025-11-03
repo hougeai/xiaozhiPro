@@ -420,7 +420,7 @@ void CustomOledDisplay::UpdateStatusBar(bool update_all) {
     }
 
     // 设备空闲状态时更新时间显示：每 10 秒更新一次时间显示，设置到状态标签
-    if (app.GetDeviceState() == kDeviceStateIdle) {
+    if (app.GetDeviceState() == kDeviceStateIdle && !app.music_playing_) {
         if (last_status_update_time_ + std::chrono::seconds(10) < std::chrono::system_clock::now()) {
             // Set status to clock "HH:MM"
             time_t now = time(NULL);

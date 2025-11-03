@@ -407,7 +407,7 @@ void Esp32Music::DownloadAudioStream(const std::string& music_url) {
         if (!download_success && is_downloading_ && is_playing_ && retry_count < max_retries - 1) {
             ESP_LOGW(TAG, "Download interrupted, retrying in %d seconds...", retry_count + 1);
             // vTaskDelay(pdMS_TO_TICKS(1000 * (retry_count + 1)));
-            vTaskDelay(pdMS_TO_TICKS(1000));
+            vTaskDelay(pdMS_TO_TICKS(500));
         } 
         retry_count++;
     }
