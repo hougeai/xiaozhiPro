@@ -655,7 +655,8 @@ void Application::MainEventLoop() {
                             }
                         }
                         SetDeviceState(kDeviceStateListening);
-                        std::string message = alarm_m_->GetRingName() + "闹钟时间已到，请你播报闹钟名称和当前时间，并给一些关于闹钟名称事项的建议。";
+                        // std::string message = alarm_m_->GetRingName() + "闹钟时间已到，请你播报闹钟名称和当前时间，并给一些关于闹钟名称事项的建议。";
+                        std::string message = "闹钟响起";
                         protocol_->SendWakeWordDetected(message);
                         alarm_triggered_ = true;
                     }

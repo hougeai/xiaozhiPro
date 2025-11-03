@@ -287,24 +287,23 @@ bool Esp32Music::StopStreaming() {
 // 流式下载音频数据
 void Esp32Music::DownloadAudioStream(const std::string& music_url) {
     auto network = Board::GetInstance().GetNetwork();
-    auto http = network->CreateHttp(0);
     // 添加重试机制
-    const int max_retries = 3;
+    const int max_retries = 20;
     int retry_count = 0;
     bool download_success = false;
+    int  content_length   = -1;          // 服务器给出的总长度
+    int  resume_from      = total_downloaded_; // 下次续传起点
     while (retry_count < max_retries && !download_success && is_downloading_ && is_playing_) {
+        auto http = network->CreateHttp(0);
         // 设置基本请求头
         http->SetHeader("User-Agent", "ESP32-Music-Player/1.0");
         http->SetHeader("Accept", "*/*");
+        http->SetHeader("Connection", "close");
+        http->SetTimeout(90000); // 设置超时时间为20秒
         // 支持断点续传
-        if (retry_count > 0) {
-            // 如果是重试，尝试从上次中断的位置继续下载
-            std::string range_header = "bytes=" + std::to_string(total_downloaded_) + "-";
-            http->SetHeader("Range", range_header);
-            ESP_LOGI(TAG, "Resuming download from byte %d", total_downloaded_);
-        } else {
-            http->SetHeader("Range", "bytes=0-");
-        }
+        std::string range_hdr = "bytes=" + std::to_string(resume_from) + "-";
+        http->SetHeader("Range", range_hdr);
+        ESP_LOGI(TAG, "Retry %d/%d  Range: %s", retry_count + 1, max_retries, range_hdr.c_str());
         if (!http->Open("GET", music_url)) {
             ESP_LOGE(TAG, "Failed to connect to music stream URL (attempt %d/%d)", retry_count + 1, max_retries);
             http->Close();
@@ -325,7 +324,8 @@ void Esp32Music::DownloadAudioStream(const std::string& music_url) {
             continue;
         }
         if (retry_count == 0) {
-            ESP_LOGI(TAG, "Started downloading audio stream, status: %d", status_code);
+            content_length = http->GetBodyLength();
+            ESP_LOGI(TAG, "Started downloading audio stream, status: %d content-length: %d", status_code, content_length);
         } else {
             ESP_LOGI(TAG, "Resumed downloading audio stream, status: %d", status_code);
         }
@@ -336,8 +336,14 @@ void Esp32Music::DownloadAudioStream(const std::string& music_url) {
         while (is_downloading_ && is_playing_) {
             int bytes_read = http->Read(buffer, chunk_size);
             if (bytes_read <= 0) {
-                ESP_LOGI(TAG, "Audio stream download completed, total: %d bytes", total_downloaded_);
-                download_success = true;
+                if (content_length > 0 && total_downloaded_ >= content_length-10) {
+                    ESP_LOGI(TAG, "Download complete: %d bytes", total_downloaded_);
+                    download_success = true;
+                } else {
+                    resume_from = total_downloaded_;
+                    ESP_LOGW(TAG, "Connection dropped or server closed early  %d/%d",
+                            total_downloaded_, content_length);
+                }
                 break;
             }
             // 只在第一次读取时检测文件类型
@@ -387,7 +393,7 @@ void Esp32Music::DownloadAudioStream(const std::string& music_url) {
                     buffer_size_ += bytes_read;
                     total_downloaded_ += bytes_read;
                     buffer_cv_.notify_one(); // 只唤醒一个线程，all 是唤醒所有线程；假设缓冲区之前已满，只有下载线程在等待，假设缓冲区之前为空，只有播放线程在等待
-                    if (total_downloaded_ % (256 * 1024) == 0) {  // 每256KB打印一次进度
+                    if (total_downloaded_ % (128 * 1024) == 0) {  // 每256KB打印一次进度
                         ESP_LOGI(TAG, "Downloaded %d bytes, buffer size: %d", total_downloaded_, buffer_size_);
                     }
                 } else {
@@ -400,7 +406,8 @@ void Esp32Music::DownloadAudioStream(const std::string& music_url) {
         // 如果下载未成功且还需要重试
         if (!download_success && is_downloading_ && is_playing_ && retry_count < max_retries - 1) {
             ESP_LOGW(TAG, "Download interrupted, retrying in %d seconds...", retry_count + 1);
-            vTaskDelay(pdMS_TO_TICKS(1000 * (retry_count + 1)));
+            // vTaskDelay(pdMS_TO_TICKS(1000 * (retry_count + 1)));
+            vTaskDelay(pdMS_TO_TICKS(1000));
         } 
         retry_count++;
     }
