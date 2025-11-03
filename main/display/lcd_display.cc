@@ -3,6 +3,7 @@
 #include "settings.h"
 #include "lvgl_theme.h"
 #include "assets/lang_config.h"
+#include "system_info.h"
 
 #include <vector>
 #include <algorithm>
@@ -14,6 +15,10 @@
 #include <cstring>
 
 #include "board.h"
+#include "application.h"
+#include "audio_codec.h"
+#include "display_utils.h"
+
 
 #define TAG "LcdDisplay"
 
@@ -458,6 +463,18 @@ void LcdDisplay::SetupUI() {
     lv_obj_set_style_text_font(emoji_label_, large_icon_font, 0);
     lv_obj_set_style_text_color(emoji_label_, lvgl_theme->text_color(), 0);
     lv_label_set_text(emoji_label_, FONT_AWESOME_MICROCHIP_AI);
+
+    // Create idle info labels
+    for (int i = 0; i < 8; i++) {
+        idle_labels_[i] = lv_label_create(content_);
+        lv_label_set_text(idle_labels_[i], "");
+        lv_label_set_long_mode(idle_labels_[i], LV_LABEL_LONG_SCROLL_CIRCULAR);
+        lv_obj_set_width(idle_labels_[i], LV_HOR_RES * 0.9);
+        lv_obj_set_style_text_align(idle_labels_[i], LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_pad_top(idle_labels_[i], 0, 0);
+        lv_obj_set_style_pad_bottom(idle_labels_[i], 0, 0);
+        lv_obj_add_flag(idle_labels_[i], LV_OBJ_FLAG_HIDDEN);
+    }
 }
 #if CONFIG_IDF_TARGET_ESP32P4
 #define  MAX_MESSAGES 40
@@ -861,6 +878,18 @@ void LcdDisplay::SetupUI() {
     lv_obj_set_style_text_color(low_battery_label_, lv_color_white(), 0);
     lv_obj_center(low_battery_label_);
     lv_obj_add_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN);
+
+    // Create idle info labels for non-wechat style
+    for (int i = 0; i < 8; i++) {
+        idle_labels_[i] = lv_label_create(content_);
+        lv_label_set_text(idle_labels_[i], "");
+        lv_label_set_long_mode(idle_labels_[i], LV_LABEL_LONG_SCROLL_CIRCULAR);
+        lv_obj_set_width(idle_labels_[i], LV_HOR_RES * 0.9);
+        lv_obj_set_style_text_align(idle_labels_[i], LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_pad_top(idle_labels_[i], 0, 0);
+        lv_obj_set_style_pad_bottom(idle_labels_[i], 0, 0);
+        lv_obj_add_flag(idle_labels_[i], LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 void LcdDisplay::SetPreviewImage(std::unique_ptr<LvglImage> image) {
@@ -1110,4 +1139,232 @@ void LcdDisplay::SetTheme(Theme* theme) {
 
     // No errors occurred. Save theme to settings
     Display::SetTheme(lvgl_theme);
+}
+
+void LcdDisplay::UpdateStatusBar(bool update_all) {
+    auto& app = Application::GetInstance();
+    auto& board = Board::GetInstance();
+    auto codec = board.GetAudioCodec();
+
+    // Update mute icon
+    {
+        DisplayLockGuard lock(this);
+        if (mute_label_ == nullptr) {
+            return;
+        }
+
+        // 如果静音状态改变，则更新图标
+        if (codec->output_volume() == 0 && !muted_) {
+            muted_ = true;
+            lv_label_set_text(mute_label_, FONT_AWESOME_VOLUME_XMARK);
+        } else if (codec->output_volume() > 0 && muted_) {
+            muted_ = false;
+            lv_label_set_text(mute_label_, "");
+        }
+    }
+
+    // 设备空闲状态时更新时间显示：每 10 秒更新一次时间显示，设置到状态标签
+    if (app.GetDeviceState() == kDeviceStateIdle) {
+        if (last_status_update_time_ + std::chrono::seconds(10) < std::chrono::system_clock::now()) {
+            // Set status to clock "HH:MM"
+            time_t now = time(NULL);
+            struct tm* tm = localtime(&now);
+            // Check if the we have already set the time
+            if (tm->tm_year >= 2025 - 1900) {
+                char time_str[16];
+                strftime(time_str, sizeof(time_str), "%H:%M  ", tm);
+                SetStatus(time_str);
+            } else {
+                ESP_LOGW(TAG, "System time is not set, tm_year: %d", tm->tm_year);
+            }
+        }
+        if (update_all || idle_counter_++ % refresh_interval_ == 0) {
+            ShowIdleInfo();
+        }
+    } else {
+        // 在非空闲状态隐藏待机信息
+        HideIdleInfo();
+        current_idle_page_ = 0;
+        idle_counter_ = 0;
+    }
+
+    // 更新电池图标
+    int battery_level;
+    bool charging, discharging;
+    const char* icon = nullptr;
+    if (board.GetBatteryLevel(battery_level, charging, discharging)) {
+        if (charging) {
+            icon = FONT_AWESOME_BATTERY_BOLT;
+        } else {
+            const char* levels[] = {
+                FONT_AWESOME_BATTERY_EMPTY, // 0-19%
+                FONT_AWESOME_BATTERY_QUARTER,    // 20-39%
+                FONT_AWESOME_BATTERY_HALF,    // 40-59%
+                FONT_AWESOME_BATTERY_THREE_QUARTERS,    // 60-79%
+                FONT_AWESOME_BATTERY_FULL, // 80-99%
+                FONT_AWESOME_BATTERY_FULL, // 100%
+            };
+            icon = levels[battery_level / 20];
+        }
+        DisplayLockGuard lock(this);
+        if (battery_label_ != nullptr && battery_icon_ != icon) {
+            battery_icon_ = icon;
+            lv_label_set_text(battery_label_, battery_icon_);
+        }
+
+        if (low_battery_popup_ != nullptr) {
+            if (strcmp(icon, FONT_AWESOME_BATTERY_EMPTY) == 0 && discharging) {
+                if (lv_obj_has_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN)) { // 如果低电量提示框隐藏，则显示
+                    lv_obj_remove_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN);
+                    app.PlaySound(Lang::Sounds::OGG_LOW_BATTERY);
+                }
+            } else {
+                // Hide the low battery popup when the battery is not empty
+                if (!lv_obj_has_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN)) { // 如果低电量提示框显示，则隐藏
+                    lv_obj_add_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN);
+                }
+            }
+        }
+    }
+
+    // 每 10 秒更新一次网络图标
+    static int seconds_counter = 0;
+    if (update_all || seconds_counter++ % 10 == 0) {
+        // 升级固件时，不读取 4G 网络状态，避免占用 UART 资源
+        auto device_state = Application::GetInstance().GetDeviceState();
+        static const std::vector<DeviceState> allowed_states = {
+            kDeviceStateIdle,
+            kDeviceStateStarting,
+            kDeviceStateWifiConfiguring,
+            kDeviceStateListening,
+            kDeviceStateActivating,
+        };
+        if (std::find(allowed_states.begin(), allowed_states.end(), device_state) != allowed_states.end()) {
+            const char* icon = board.GetNetworkStateIcon();
+            if (network_label_ != nullptr && icon != nullptr && network_icon_ != icon) {
+                DisplayLockGuard lock(this);
+                network_icon_ = icon;
+                lv_label_set_text(network_label_, network_icon_);
+            }
+        }
+    }
+
+    esp_pm_lock_release(pm_lock_);
+}
+
+void LcdDisplay::ShowIdleInfo() {   
+    DisplayLockGuard lock(this);
+
+    // 第一次显示待机信息时加载设置
+    if (!idle_info_loaded_) {
+        LoadIdleInfoSettings();
+        idle_info_loaded_ = true;
+    }
+    
+    // 先隐藏所有标签
+    for (int i = 0; i < 8; i++) {
+        if (idle_labels_[i] != nullptr) {
+            lv_obj_add_flag(idle_labels_[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    if (valid_idle_indices_.empty()) {
+        ESP_LOGI(TAG, "No idle info to display");
+        return;
+    }
+    
+    // 隐藏聊天和表情区域
+#if CONFIG_USE_WECHAT_MESSAGE_STYLE
+    if (emoji_image_ != nullptr) {
+        lv_obj_add_flag(emoji_image_, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (emoji_label_ != nullptr) {
+        lv_obj_add_flag(emoji_label_, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (content_ != nullptr) {
+        // 隐藏所有聊天消息气泡
+        uint32_t child_count = lv_obj_get_child_cnt(content_);
+        for (uint32_t i = 0; i < child_count; i++) {
+            lv_obj_t* child = lv_obj_get_child(content_, i);
+            if (child != nullptr) {
+                lv_obj_add_flag(child, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+    }
+#else
+    if (emoji_box_ != nullptr) {
+        lv_obj_add_flag(emoji_box_, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (preview_image_ != nullptr) {
+        lv_obj_add_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (chat_message_label_ != nullptr) {
+        lv_obj_add_flag(chat_message_label_, LV_OBJ_FLAG_HIDDEN);
+    }
+#endif
+    
+    // 计算总页数
+    total_idle_pages_ = (valid_idle_indices_.size() + items_per_page_ - 1) / items_per_page_;
+    
+    // 显示当前页的标签
+    int start_idx = current_idle_page_ * items_per_page_;
+    int end_idx = std::min(start_idx + items_per_page_, (int)valid_idle_indices_.size());
+    
+    for (int i = start_idx; i < end_idx; i++) {
+        int label_idx = valid_idle_indices_[i];
+        if (idle_labels_[label_idx] != nullptr) {
+            lv_label_set_text(idle_labels_[label_idx], idle_info_texts_[label_idx].c_str());
+            SetLabelScrollSpeed(idle_labels_[label_idx], 30);
+            lv_obj_remove_flag(idle_labels_[label_idx], LV_OBJ_FLAG_HIDDEN);
+            ESP_LOGI(TAG, "Displaying idle info label %d (page %d): %s", 
+                    label_idx, current_idle_page_, idle_info_texts_[label_idx].c_str());
+        }
+    }
+    
+    // 切换到下一页
+    current_idle_page_ = (current_idle_page_ + 1) % total_idle_pages_;
+    ESP_LOGI(TAG, "Switched to idle info display with %d labels", valid_idle_indices_.size());
+}
+
+void LcdDisplay::HideIdleInfo() {
+    DisplayLockGuard lock(this);
+    
+    // 隐藏待机信息标签
+    for (int i = 0; i < 8; i++) {
+        if (idle_labels_[i] != nullptr) {
+            lv_obj_add_flag(idle_labels_[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    
+    // 恢复正常显示内容
+#if CONFIG_USE_WECHAT_MESSAGE_STYLE
+    if (emoji_label_ != nullptr) {
+        lv_obj_remove_flag(emoji_label_, LV_OBJ_FLAG_HIDDEN);
+    }
+    // 显示聊天消息气泡
+    if (content_ != nullptr) {
+        uint32_t child_count = lv_obj_get_child_cnt(content_);
+        for (uint32_t i = 0; i < child_count; i++) {
+            lv_obj_t* child = lv_obj_get_child(content_, i);
+            if (child != nullptr) {
+                lv_obj_remove_flag(child, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+    }
+#else
+    if (emoji_box_ != nullptr) {
+        lv_obj_remove_flag(emoji_box_, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (chat_message_label_ != nullptr) {
+        lv_obj_remove_flag(chat_message_label_, LV_OBJ_FLAG_HIDDEN);
+    }
+#endif
+}
+
+void LcdDisplay::LoadIdleInfoSettings() {
+    display_utils::LoadIdleInfoSettings(idle_info_texts_, valid_idle_indices_, refresh_interval_);
+}
+
+void LcdDisplay::SetLabelScrollSpeed(lv_obj_t* label, int px_per_sec) {
+    display_utils::SetLabelScrollSpeed(label, px_per_sec, refresh_interval_);
 }

@@ -33,10 +33,27 @@ protected:
     esp_timer_handle_t preview_timer_ = nullptr;
     std::unique_ptr<LvglImage> preview_image_cached_ = nullptr;
 
+    // Idle info display related members
+    lv_obj_t* idle_labels_[8] = {nullptr};
+    std::string idle_info_texts_[8];
+    std::vector<int> valid_idle_indices_;
+    int current_idle_page_ = 0;
+    int total_idle_pages_ = 0;
+    int items_per_page_ = 4;
+    int refresh_interval_ = 5;
+    bool idle_info_loaded_ = false;
+    int idle_counter_ = 0;
+
     void InitializeLcdThemes();
     void SetupUI();
     virtual bool Lock(int timeout_ms = 0) override;
     virtual void Unlock() override;
+    virtual void UpdateStatusBar(bool update_all = false) override;
+    // Idle info display methods
+    void ShowIdleInfo();
+    void HideIdleInfo();
+    void LoadIdleInfoSettings();
+    void SetLabelScrollSpeed(lv_obj_t* label, int px_per_sec);
 
 protected:
     // 添加protected构造函数
