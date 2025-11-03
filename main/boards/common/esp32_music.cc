@@ -450,13 +450,13 @@ void Esp32Music::PlayAudioStream() {
     uint8_t* read_ptr = nullptr; // 指针，标记读到哪里了，用于消费数据
     int bytes_left = 0; // 剩余字节数，从 read_ptr 开始还有多少字节可读
 
-    // 分配一块8192字节的内存，从左到右填充和消费
-    mp3_input_buffer = (uint8_t*)heap_caps_malloc(8192, MALLOC_CAP_SPIRAM);
-    if (!mp3_input_buffer) {
-        ESP_LOGE(TAG, "Failed to allocate MP3 input buffer");
-        is_playing_ = false;
-        return;
-    }
+    // 分配一块AUDIO_BUFFER_SIZE字节的内存，从左到右填充和消费
+    mp3_input_buffer = (uint8_t*)heap_caps_malloc(AUDIO_BUFFER_SIZE, MALLOC_CAP_SPIRAM);
+        if (!mp3_input_buffer) {
+            ESP_LOGE(TAG, "Failed to allocate MP3 input buffer");
+            is_playing_ = false;
+            return;
+        }
     
     // 标记是否已经处理过ID3标签
     bool id3_processed = false;
@@ -530,7 +530,7 @@ void Esp32Music::PlayAudioStream() {
             }
             
             // 检查mp3缓冲区可用空间
-            size_t space_available = 8192 - bytes_left; //
+            size_t space_available = AUDIO_BUFFER_SIZE - bytes_left; //
             size_t copy_size = std::min(chunk.size, space_available);
             // 剩余数据后面追加新的chunk数据
             if (chunk.data != nullptr && chunk.size > 0 && chunk.owned) {
