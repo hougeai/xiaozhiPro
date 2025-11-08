@@ -276,6 +276,7 @@ void McpServer::AddCommonTools() {
             auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
             http->SetHeader("Content-Type", "application/json");
             http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
+            http->SetTimeout(6000); // 设置超时时间
             // 构造请求的JSON数据
             cJSON* json_data = cJSON_CreateObject();
             cJSON_AddStringToObject(json_data, "query", properties["query"].value<std::string>().c_str());
