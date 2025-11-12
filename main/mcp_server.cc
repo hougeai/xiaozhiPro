@@ -276,7 +276,7 @@ void McpServer::AddCommonTools() {
             auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
             http->SetHeader("Content-Type", "application/json");
             http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
-            http->SetTimeout(6000); // 设置超时时间
+            http->SetTimeout(5000); // 设置超时时间
             // 构造请求的JSON数据
             cJSON* json_data = cJSON_CreateObject();
             cJSON_AddStringToObject(json_data, "query", properties["query"].value<std::string>().c_str());
@@ -434,6 +434,78 @@ void McpServer::AddCommonTools() {
             } else {
                 return std::string(R"({"success":false,"message":")" + result + R"("})");
             }
+        });
+    // weather
+    AddTool("self.weather",
+        "当用户询问天气相关问题时调用此工具。city 参数：只在用户提到具体城市时填写城市名，否则必须填写空字符串''\n"
+        "Args:"
+        "city: str, 城市名称，只在必要时填写，否则必须填写空字符串''。",
+        PropertyList({
+            Property("city", kPropertyTypeString)
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
+            http->SetHeader("Content-Type", "application/json");
+            http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
+            http->SetTimeout(5000); // 设置超时时间
+            // 构造请求的JSON数据
+            cJSON* json_data = cJSON_CreateObject();
+            cJSON_AddStringToObject(json_data, "city", properties["city"].value<std::string>().c_str());
+            char* json_string = cJSON_PrintUnformatted(json_data);
+            std::string data(json_string);
+            cJSON_free(json_string);
+            cJSON_Delete(json_data);
+            http->SetContent(std::move(data));
+            std::string base_url = std::string(CONFIG_SERVER_URL) + "/weather";
+    
+            if (!http->Open("POST", base_url)) {
+                ESP_LOGE(TAG, "Failed to open HTTP connection");
+                return R"({"success":false,"message":"Failed to connect to knowledge base"})";
+            }
+            int status_code = http->GetStatusCode();
+            std::string response = http->ReadAll();
+            cJSON* root = cJSON_Parse(response.c_str());
+            http->Close();
+            if (status_code != 200) {
+                ESP_LOGE(TAG, "Knowledge base request failed with status code: %d", status_code);
+                if (root) {
+                    cJSON* msg = cJSON_GetObjectItem(root, "msg");
+                    std::string error_msg = msg ? msg->valuestring : "Unknown error";
+                    ESP_LOGE(TAG, "Knowledge base error message: %s", error_msg.c_str());
+                    cJSON_Delete(root);
+                    return std::string(R"({"success":false,"message":")" + error_msg + R"("})");
+                }
+                return R"({"success":false,"message":"Knowledge base request failed"})";
+            }
+            
+            if (!root) {
+                ESP_LOGE(TAG, "Failed to parse knowledge base response");
+                return R"({"success":false,"message":"Failed to parse knowledge base response"})";
+            }
+            cJSON* data_obj = cJSON_GetObjectItem(root, "data"); 
+            // 直接将data内容转换为字符串返回
+            if (!data_obj) {
+                cJSON_Delete(root);
+                ESP_LOGE(TAG, "No data object in weather response");
+                return R"({"success":false,"message":"No data in weather response"})";
+            }
+            // 将data对象转换为字符串
+            char* data_json = cJSON_PrintUnformatted(data_obj);
+            std::string data_str(data_json);
+            cJSON_free(data_json);
+            cJSON_Delete(root);
+            
+            // 构造结果对象
+            cJSON* result = cJSON_CreateObject();
+            cJSON_AddBoolToObject(result, "success", true);
+            cJSON_AddItemToObject(result, "data", cJSON_CreateString(data_str.c_str()));
+            char* result_json = cJSON_PrintUnformatted(result);
+            std::string result_str(result_json);
+            cJSON_free(result_json);
+            cJSON_Delete(result);
+            
+            return result_str;
+           
         });
     // sys
     AddTool("self.sys.device_auth",
