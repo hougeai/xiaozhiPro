@@ -23,6 +23,50 @@
 
 #define TAG "AI4gDisplayBoard"
 
+int EstimateBatteryPercent(int voltage_mv)
+{
+    struct Point {
+        int mv;
+        int percent;
+    };
+
+    // 电压 - 电量 曲线（你可以自行调整）
+    const Point curve[] = {
+        {4168, 100},
+        {4100,  80},
+        {4000,  60},
+        {3900,  40},
+        {3800,  20},
+        {3700,  10},
+        {3600,   5},
+        {3400,   0},
+    };
+
+    const int size = sizeof(curve) / sizeof(curve[0]);
+
+    // 高于最高值
+    if (voltage_mv >= curve[0].mv)
+        return 100;
+
+    // 低于最低值
+    if (voltage_mv <= curve[size - 1].mv)
+        return 0;
+
+    // 分段线性插值
+    for (int i = 0; i < size - 1; i++) {
+        if (voltage_mv >= curve[i + 1].mv && voltage_mv <= curve[i].mv) {
+            int mv_high = curve[i].mv;
+            int mv_low = curve[i + 1].mv;
+            int pct_high = curve[i].percent;
+            int pct_low = curve[i + 1].percent;
+
+            float ratio = (float)(voltage_mv - mv_low) / (mv_high - mv_low);
+            return pct_low + (int)(ratio * (pct_high - pct_low) + 0.5f);
+        }
+    }
+    return 0;
+}
+
 class Charge : public I2cDevice {
 public:
     Charge(i2c_master_bus_handle_t i2c_bus, uint8_t addr) : I2cDevice(i2c_bus, addr) {
@@ -38,23 +82,25 @@ public:
     
     void UpdateBatteryInfo() {
         // 读取电池电量百分比 (StateOfCharge register address: 0x02)
-        ReadRegs(0x1C, read_buffer_, 2); // 读取两个字节
+        // ReadRegs(0x1C, read_buffer_, 2); // 读取两个字节
         // BQ27220 的 StateOfCharge 返回 16 位固定点值，单位为 1/256 %。
         // LSB = 1/256%，MSB = 整数部分。
-        uint16_t soc_raw = (uint16_t)read_buffer_[0] | ((uint16_t)read_buffer_[1] << 8);
+        // uint16_t soc_raw = (uint16_t)read_buffer_[0] | ((uint16_t)read_buffer_[1] << 8);
         // 转换为实际百分比
-        float soc = soc_raw / 256.0f;
+        // float soc = soc_raw / 256.0f;
         // ESP_LOGI(TAG, "Battery level(raw): %.1f%%", soc);
         // 限制范围，防止意外超出
-        if (soc > 100.0f) soc = 100.0f;
-        if (soc < 0.0f) soc = 0.0f;
+        // if (soc > 100.0f) soc = 100.0f;
+        // if (soc < 0.0f) soc = 0.0f;
         // 保存到成员变量，可选是否保留小数
-        battery_level_ = static_cast<uint8_t>(soc + 0.5f);  // 四舍五入成整数%
+        // battery_level_ = static_cast<uint8_t>(soc + 0.5f);  // 四舍五入成整数%
         // ESP_LOGI(TAG, "Battery level(final): %d%%", battery_level_);
         // 读取电压寄存器
         ReadRegs(0x08, read_buffer_, 2);
-        // int16_t voltage = static_cast<uint16_t>(read_buffer_[1] << 8 | read_buffer_[0]);
-        // ESP_LOGI(TAG, "Battery voltage: %d mV", voltage);
+        int16_t voltage = static_cast<uint16_t>(read_buffer_[1] << 8 | read_buffer_[0]);
+        // 用电压估算电量
+        battery_level_ = EstimateBatteryPercent(voltage);
+        ESP_LOGI(TAG, "Battery voltage: %d mV Battery level: %d ", voltage, battery_level_);
         // 读取电流寄存器，判断充电状态
         ReadRegs(0x0c, read_buffer_ + 2, 2);
         int16_t current = static_cast<int16_t>(read_buffer_[3] << 8 | read_buffer_[2]);

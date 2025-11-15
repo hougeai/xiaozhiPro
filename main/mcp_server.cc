@@ -437,9 +437,9 @@ void McpServer::AddCommonTools() {
         });
     // weather
     AddTool("self.weather",
-        "当用户询问天气相关问题时调用此工具。city 参数：只在用户提到具体城市时填写城市名，否则必须填写空字符串''\n"
+        "当用户询问天气相关问题时调用此工具。city 参数：默认填写空字符串''，只在用户提到具体城市时填写城市名\n"
         "Args:"
-        "city: str, 城市名称，只在必要时填写，否则必须填写空字符串''。",
+        "city: str, 城市名称，默认为空字符串''。",
         PropertyList({
             Property("city", kPropertyTypeString)
         }),
