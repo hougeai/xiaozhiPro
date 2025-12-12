@@ -23,7 +23,13 @@ DualNetworkBoard::DualNetworkBoard(gpio_num_t ml307_tx_pin, gpio_num_t ml307_rx_
 NetworkType DualNetworkBoard::LoadNetworkTypeFromSettings(int32_t default_net_type) {
     Settings settings("network", true);
     int network_type = settings.GetInt("type", default_net_type); // 默认使用ML307 (1)
+#if CONFIG_USE_4G_WIFI
     return network_type == 1 ? NetworkType::ML307 : NetworkType::WIFI;
+#elif CONFIG_USE_4G
+    return NetworkType::ML307;
+#else
+    return NetworkType::WIFI;
+#endif
 }
 
 void DualNetworkBoard::SaveNetworkTypeToSettings(NetworkType type) {

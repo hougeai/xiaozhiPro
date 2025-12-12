@@ -43,6 +43,8 @@ public:
     virtual Led* GetManualLed() { return nullptr; }
     virtual AudioCodec* GetAudioCodec() = 0;
     virtual bool GetTemperature(float& esp32temp);
+    virtual bool Gethead_value(uint32_t& head_value);
+    virtual bool Getbody_value(uint32_t& body_value);
     virtual Display* GetDisplay();
     virtual Camera* GetCamera();
     virtual NetworkInterface* GetNetwork() = 0;

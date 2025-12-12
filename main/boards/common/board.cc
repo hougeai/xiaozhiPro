@@ -53,6 +53,14 @@ bool Board::GetTemperature(float& esp32temp){
     return false;
 }
 
+bool Board::Gethead_value(uint32_t& head_value){
+    return false;
+}
+
+bool Board::Getbody_value(uint32_t& body_value){
+    return false;
+}
+
 Display* Board::GetDisplay() {
     static NoDisplay display;
     return &display;

@@ -399,6 +399,11 @@ choice BOARD_TYPE
     config BOARD_TYPE_ZHENGCHEN_1_54TFT_ML307
         bool "征辰科技1.54(ML307)"
         depends on IDF_TARGET_ESP32S3
+    config BOARD_TYPE_ZHENGCHEN_EYE
+        bool "征辰科技AI-EYE"
+        depends on IDF_TARGET_ESP32S3
+        select LV_USE_GIF
+        select LV_GIF_CACHE_DECODE_DATA
     config BOARD_TYPE_MINSI_K08_DUAL
         bool "敏思科技K08(DUAL)"
         depends on IDF_TARGET_ESP32S3
@@ -609,6 +614,34 @@ choice WAKE_WORD_TYPE
 
 endchoice
 
+choice DISPLAY_TYPE_ZHENGCHEN_EYE
+    depends on BOARD_TYPE_ZHENGCHEN_EYE
+    prompt "ZHENGCHEN_EYE LCD Type"
+    default USE_LCD_240X240_GIF
+    help
+        屏幕类型选择
+    config USE_NOLCD
+        bool "不使用屏幕"
+    config USE_LCD_240X240_GIF
+        bool "GC9A01, 分辨率240*240, 圆屏 (带眉毛的眼睛GIF)"
+    config USE_LCD_160X160_GIF
+        bool "GC9D01, 分辨率160*160, 圆屏 (带眉毛的眼睛GIF)"
+endchoice
+
+choice NET_TYPE_ZHENGCHEN_EYE
+    depends on BOARD_TYPE_ZHENGCHEN_EYE
+    prompt "ZHENGCHEN_EYE NET Type"
+    default USE_WIFI
+    help
+        网络类型选择
+    config USE_4G
+        bool "仅仅4G网络"
+    config USE_WIFI
+        bool "仅仅WiFi网络"
+    config USE_4G_WIFI
+        bool "兼容4G和WiFi网络"
+endchoice
+
 config CUSTOM_WAKE_WORD
     string "Custom Wake Word"
     default "xiao tu dou"
@@ -652,7 +685,7 @@ config USE_DEVICE_AEC
         || BOARD_TYPE_LICHUANG_DEV_S3 || BOARD_TYPE_ESP_KORVO2_V3 || BOARD_TYPE_WAVESHARE_S3_TOUCH_AMOLED_1_75 || BOARD_TYPE_WAVESHARE_S3_TOUCH_LCD_1_83\
         || BOARD_TYPE_WAVESHARE_S3_TOUCH_AMOLED_2_06 || BOARD_TYPE_WAVESHARE_S3_TOUCH_LCD_4B || BOARD_TYPE_WAVESHARE_P4_WIFI6_TOUCH_LCD_4B || BOARD_TYPE_WAVESHARE_P4_WIFI6_TOUCH_LCD_7B \
         || BOARD_TYPE_WAVESHARE_P4_WIFI6_TOUCH_LCD_XC || BOARD_TYPE_ESP_S3_LCD_EV_Board_2 || BOARD_TYPE_YUNLIAO_S3 \
-        || BOARD_TYPE_ECHOEAR || BOARD_TYPE_WAVESHARE_S3_TOUCH_LCD_3_49)
+        || BOARD_TYPE_ECHOEAR || BOARD_TYPE_WAVESHARE_S3_TOUCH_LCD_3_49 || BOARD_TYPE_AI_4G_DISPLAY || BOARD_TYPE_ZHENGCHEN_EYE)
     help
         To work properly, device-side AEC requires a clean output reference path from the speaker signal and physical acoustic isolation between the microphone and speaker.
 

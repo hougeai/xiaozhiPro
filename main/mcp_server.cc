@@ -545,7 +545,27 @@ void McpServer::AddCommonTools() {
             cJSON_Delete(root); // 会递归释放一个 JSON 对象及其所有子对象
             return result;
         });
-    
+    AddTool("self.get_head_body_status",
+        "此工具用于检查头部和身体部位是否被抚摸\n"
+        "数值越大代表力度越大\n"
+        "不需要播报具体数值，不需要确认，如果被抚摸，请播报相关情绪价值，否则什么都不要回复\n"
+        "返回值：\n"
+        "   当头部或身体被抚摸时返回具体数值，否则返回false",
+        PropertyList(),
+        [&board](const PropertyList& properties) -> ReturnValue {
+            uint32_t head_value = 0;
+            uint32_t body_value = 0;
+            if (board.Gethead_value(head_value) && board.Getbody_value(body_value)) {
+                if (head_value > 30000 || body_value > 30000) {
+                    cJSON* result = cJSON_CreateObject();
+                    cJSON_AddNumberToObject(result, "head_value", head_value > 30000 ? head_value : 0);
+                    cJSON_AddNumberToObject(result, "body_value", body_value > 30000 ? body_value : 0);
+                    ESP_LOGI(TAG, "mcp return head_value: %d, body_value: %d", head_value, body_value);
+                    return result;
+                }
+            }
+            return false;
+        });
     // Restore the original tools list to the end of the tools list
     tools_.insert(tools_.end(), original_tools.begin(), original_tools.end());
 }
