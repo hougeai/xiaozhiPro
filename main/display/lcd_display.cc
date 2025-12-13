@@ -942,6 +942,22 @@ void LcdDisplay::SetupUI() {
     lv_obj_add_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN);
 
     // Create idle info labels for non-wechat style
+    content_ = lv_obj_create(screen);  // 直接在screen上创建
+    lv_obj_set_style_radius(content_, 0, 0);
+    lv_obj_set_width(content_, LV_HOR_RES);
+    lv_obj_set_height(content_, LV_SIZE_CONTENT);  // 高度自适应
+    lv_obj_set_style_pad_all(content_, lvgl_theme->spacing(4), 0);
+    lv_obj_set_style_border_width(content_, 0, 0);
+    lv_obj_set_style_bg_color(content_, lvgl_theme->background_color(), 0);
+    // Enable scrolling for chat content
+    lv_obj_set_scrollbar_mode(content_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_scroll_dir(content_, LV_DIR_VER);
+    // Create a flex container
+    lv_obj_set_flex_flow(content_, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(content_, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(content_, lvgl_theme->spacing(4), 0);
+    // 放置在整个屏幕居中，而不是紧贴top_bar
+    lv_obj_center(content_);
     for (int i = 0; i < 8; i++) {
         idle_labels_[i] = lv_label_create(content_);
         lv_label_set_text(idle_labels_[i], "");
@@ -950,7 +966,6 @@ void LcdDisplay::SetupUI() {
         lv_obj_set_style_text_align(idle_labels_[i], LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_pad_top(idle_labels_[i], 0, 0);
         lv_obj_set_style_pad_bottom(idle_labels_[i], 0, 0);
-        lv_obj_add_flag(idle_labels_[i], LV_OBJ_FLAG_HIDDEN);
     }
 }
 

@@ -124,6 +124,18 @@ void ZhengchenEyeLcdDisplay::SetEmotion(const char* emotion) {
     if (status_bar_ != nullptr) {
         lv_obj_add_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
     }
+    if (emoji_box_ != nullptr) {
+        lv_obj_add_flag(emoji_box_, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (emoji_label_ != nullptr) {
+        lv_obj_add_flag(emoji_label_, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (top_bar_ != nullptr) {
+        lv_obj_add_flag(top_bar_, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (bottom_bar_ != nullptr) {
+        lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
+    }
     
     if (preview_image_ != nullptr) {
         lv_obj_add_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
