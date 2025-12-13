@@ -903,7 +903,7 @@ void Esp32Music::UpdateLyricDisplay(uint32_t current_time_ms) {
                 lyric_text = lyrics_[current_lyric_index_].second;
             }
             // 显示歌词
-            display->SetChatMessage("lyric", lyric_text.c_str());
+            display->SetChatMessage("system", lyric_text.c_str());
         }
     }
 }

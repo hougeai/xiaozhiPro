@@ -958,6 +958,7 @@ void LcdDisplay::SetupUI() {
     lv_obj_set_style_pad_row(content_, lvgl_theme->spacing(4), 0);
     // 放置在整个屏幕居中，而不是紧贴top_bar
     lv_obj_center(content_);
+    lv_obj_add_flag(content_, LV_OBJ_FLAG_HIDDEN);
     for (int i = 0; i < 8; i++) {
         idle_labels_[i] = lv_label_create(content_);
         lv_label_set_text(idle_labels_[i], "");
@@ -1262,22 +1263,37 @@ void LcdDisplay::UpdateStatusBar(bool update_all) {
     }
 
     // 设备空闲状态时更新时间显示：每 10 秒更新一次时间显示，设置到状态标签
-    if (app.GetDeviceState() == kDeviceStateIdle && !app.music_playing_) {
-        if (last_status_update_time_ + std::chrono::seconds(10) < std::chrono::system_clock::now()) {
-            // Set status to clock "HH:MM"
-            time_t now = time(NULL);
-            struct tm* tm = localtime(&now);
-            // Check if the we have already set the time
-            if (tm->tm_year >= 2025 - 1900) {
-                char time_str[16];
-                strftime(time_str, sizeof(time_str), "%H:%M  ", tm);
-                SetStatus(time_str);
-            } else {
-                ESP_LOGW(TAG, "System time is not set, tm_year: %d", tm->tm_year);
+    if (app.GetDeviceState() == kDeviceStateIdle) {
+        if (!app.music_playing_) {
+            if (last_status_update_time_ + std::chrono::seconds(10) < std::chrono::system_clock::now()) {
+                // Set status to clock "HH:MM"
+                time_t now = time(NULL);
+                struct tm* tm = localtime(&now);
+                // Check if the we have already set the time
+                if (tm->tm_year >= 2025 - 1900) {
+                    char time_str[16];
+                    strftime(time_str, sizeof(time_str), "%H:%M  ", tm);
+                    SetStatus(time_str);
+                } else {
+                    ESP_LOGW(TAG, "System time is not set, tm_year: %d", tm->tm_year);
+                }
             }
-        }
-        if (update_all || idle_counter_++ % refresh_interval_ == 0) {
-            ShowIdleInfo();
+            if (update_all || idle_counter_++ % refresh_interval_ == 0) {
+                ShowIdleInfo();
+            }
+        } else {
+            if (emoji_box_ != nullptr) {
+                lv_obj_remove_flag(emoji_box_, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (preview_image_ != nullptr) {
+                lv_obj_remove_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (bottom_bar_ != nullptr) {
+                lv_obj_remove_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (chat_message_label_ != nullptr) {
+                lv_obj_remove_flag(chat_message_label_, LV_OBJ_FLAG_HIDDEN);
+            }
         }
     } else {
         // 在非空闲状态隐藏待机信息
@@ -1396,11 +1412,14 @@ void LcdDisplay::ShowIdleInfo() {
     if (preview_image_ != nullptr) {
         lv_obj_add_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
     }
-    if (chat_message_label_ != nullptr) {
-        lv_obj_add_flag(chat_message_label_, LV_OBJ_FLAG_HIDDEN);
+    if (bottom_bar_ != nullptr) {
+        lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
     }
 #endif
-    
+    // 显示content_容器和其中的待机信息
+    if (content_ != nullptr) {
+        lv_obj_remove_flag(content_, LV_OBJ_FLAG_HIDDEN);
+    }
     // 计算总页数
     total_idle_pages_ = (valid_idle_indices_.size() + items_per_page_ - 1) / items_per_page_;
     
@@ -1433,6 +1452,10 @@ void LcdDisplay::HideIdleInfo() {
             lv_obj_add_flag(idle_labels_[i], LV_OBJ_FLAG_HIDDEN);
         }
     }
+    // 隐藏content_容器
+    if (content_ != nullptr) {
+        lv_obj_add_flag(content_, LV_OBJ_FLAG_HIDDEN);
+    }
     
     // 恢复正常显示内容
 #if CONFIG_USE_WECHAT_MESSAGE_STYLE
@@ -1453,8 +1476,11 @@ void LcdDisplay::HideIdleInfo() {
     if (emoji_box_ != nullptr) {
         lv_obj_remove_flag(emoji_box_, LV_OBJ_FLAG_HIDDEN);
     }
-    if (chat_message_label_ != nullptr) {
-        lv_obj_remove_flag(chat_message_label_, LV_OBJ_FLAG_HIDDEN);
+    if (preview_image_ != nullptr) {
+        lv_obj_remove_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (bottom_bar_ != nullptr) {
+        lv_obj_remove_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
     }
 #endif
 }

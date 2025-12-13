@@ -29,7 +29,7 @@ void ZhengchenEyeLcdDisplay::SetupUI() {
     ESP_LOGI(TAG, "Starting UI setup");
     DisplayLockGuard lock(this);
     /* overlay */
-    overlay_container = lv_obj_create(container_);
+    overlay_container = lv_obj_create(lv_screen_active());
     lv_obj_remove_style_all(overlay_container);  
     lv_obj_set_size(overlay_container, LV_HOR_RES, LV_VER_RES);  
     lv_obj_set_style_bg_color(overlay_container, lv_color_black(), 0);  
@@ -127,16 +127,12 @@ void ZhengchenEyeLcdDisplay::SetEmotion(const char* emotion) {
     if (emoji_box_ != nullptr) {
         lv_obj_add_flag(emoji_box_, LV_OBJ_FLAG_HIDDEN);
     }
-    if (emoji_label_ != nullptr) {
-        lv_obj_add_flag(emoji_label_, LV_OBJ_FLAG_HIDDEN);
-    }
     if (top_bar_ != nullptr) {
         lv_obj_add_flag(top_bar_, LV_OBJ_FLAG_HIDDEN);
     }
     if (bottom_bar_ != nullptr) {
         lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
     }
-    
     if (preview_image_ != nullptr) {
         lv_obj_add_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
     }
