@@ -546,11 +546,9 @@ void McpServer::AddCommonTools() {
             return result;
         });
     AddTool("self.get_head_body_status",
-        "此工具用于检查头部和身体部位是否被抚摸\n"
-        "数值越大代表力度越大\n"
-        "不需要播报具体数值，不需要确认，如果被抚摸，请播报相关情绪价值，否则什么都不要回复\n"
+        "当需要检查头部和身体部位是否被抚摸时调用此工具，如果被抚摸，不要播报具体数值，请播报相关情绪价值，否则什么都不要回复\n"
         "返回值：\n"
-        "   当头部或身体被抚摸时返回具体数值，否则返回false",
+        "   如果被抚摸，返回具体数值，数值越大代表力度越大，如果没被抚摸，返回false",
         PropertyList(),
         [&board](const PropertyList& properties) -> ReturnValue {
             uint32_t head_value = 0;
