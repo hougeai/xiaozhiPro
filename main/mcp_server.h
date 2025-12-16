@@ -325,6 +325,12 @@ public:
     void AddUserOnlyTool(const std::string& name, const std::string& description, const PropertyList& properties, std::function<ReturnValue(const PropertyList&)> callback);
     void ParseMessage(const cJSON* json);
     void ParseMessage(const std::string& message);
+    // 处理 pro 信息
+    void ParseMessagePro(const cJSON* json);
+    void DoToolCallPro(int id, const std::string& tool_name, const cJSON* tool_arguments);
+    void ReplyResultPro(int id, const std::string& result);
+    void ReplyErrorPro(int id, const std::string& message);
+
 
 private:
     McpServer();

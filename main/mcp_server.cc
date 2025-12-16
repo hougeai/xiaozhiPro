@@ -545,25 +545,28 @@ void McpServer::AddCommonTools() {
             cJSON_Delete(root); // 会递归释放一个 JSON 对象及其所有子对象
             return result;
         });
-    AddTool("self.get_head_body_status",
-        "当需要检查头部和身体部位是否被抚摸时调用此工具，如果被抚摸，不要播报具体数值，请播报相关情绪价值，否则什么都不要回复\n"
-        "返回值：\n"
-        "   如果被抚摸，返回具体数值，数值越大代表力度越大，如果没被抚摸，返回false",
-        PropertyList(),
-        [&board](const PropertyList& properties) -> ReturnValue {
-            uint32_t head_value = 0;
-            uint32_t body_value = 0;
-            if (board.Gethead_value(head_value) && board.Getbody_value(body_value)) {
-                if (head_value > 30000 || body_value > 30000) {
-                    cJSON* result = cJSON_CreateObject();
-                    cJSON_AddNumberToObject(result, "head_value", head_value > 30000 ? head_value : 0);
-                    cJSON_AddNumberToObject(result, "body_value", body_value > 30000 ? body_value : 0);
-                    ESP_LOGI(TAG, "mcp return head_value: %d, body_value: %d", head_value, body_value);
-                    return result;
+    uint32_t dummy_head, dummy_body;
+    if (board.Gethead_value(dummy_head) && board.Getbody_value(dummy_body)) {
+        AddTool("self.get_head_body_status",
+            "当需要检查头部和身体部位是否被抚摸时调用此工具，如果被抚摸，不要播报具体数值，请播报相关情绪价值，否则什么都不要回复\n"
+            "返回值：\n"
+            "   如果被抚摸，返回具体数值，数值越大代表力度越大，如果没被抚摸，返回false",
+            PropertyList(),
+            [&board](const PropertyList& properties) -> ReturnValue {
+                uint32_t head_value = 0;
+                uint32_t body_value = 0;
+                if (board.Gethead_value(head_value) && board.Getbody_value(body_value)) {
+                    if (head_value > 30000 || body_value > 30000) {
+                        cJSON* result = cJSON_CreateObject();
+                        cJSON_AddNumberToObject(result, "head_value", head_value > 30000 ? head_value : 0);
+                        cJSON_AddNumberToObject(result, "body_value", body_value > 30000 ? body_value : 0);
+                        ESP_LOGI(TAG, "mcp return head_value: %d, body_value: %d", head_value, body_value);
+                        return result;
+                    }
                 }
-            }
-            return false;
-        });
+                return false;
+            });
+    }
     // Restore the original tools list to the end of the tools list
     tools_.insert(tools_.end(), original_tools.begin(), original_tools.end());
 }
@@ -743,6 +746,22 @@ void McpServer::AddUserOnlyTools() {
                 return true;
             });
     }
+
+    // wake up
+    AddUserOnlyTool("self.wake_up", "Wake up the device",
+        PropertyList({
+            Property("reason", kPropertyTypeString, "Reason for waking up"),
+        }),
+        [this](const PropertyList& properties) -> ReturnValue {
+            std::string reason = properties["reason"].value<std::string>();
+            ESP_LOGI(TAG, "Remote Wakeup: reason=%s", reason.c_str());
+            auto display = Board::GetInstance().GetDisplay();
+            if (display) {
+                display->SetEmotion("happy");
+            }
+            Application::GetInstance().WakeWordInvoke(reason);
+            return true;
+        }); 
 }
 
 void McpServer::AddTool(McpTool* tool) {
@@ -1005,4 +1024,147 @@ void McpServer::DoToolCall(int id, const std::string& tool_name, const cJSON* to
             ReplyError(id, e.what());
         }
     });
+}
+
+void McpServer::ParseMessagePro(const cJSON* json) {
+    // Check JSONRPC version
+    auto version = cJSON_GetObjectItem(json, "jsonrpc");
+    if (version == nullptr || !cJSON_IsString(version) || strcmp(version->valuestring, "2.0") != 0) {
+        ESP_LOGE(TAG, "Invalid JSONRPC version: %s", version ? version->valuestring : "null");
+        return;
+    }
+    
+    // Check method
+    auto method = cJSON_GetObjectItem(json, "method");
+    if (method == nullptr || !cJSON_IsString(method)) {
+        ESP_LOGE(TAG, "Missing method");
+        return;
+    }
+    auto method_str = std::string(method->valuestring);
+    // Check params
+    auto params = cJSON_GetObjectItem(json, "params");
+    if (params != nullptr && !cJSON_IsObject(params)) {
+        ESP_LOGE(TAG, "Invalid params for method: %s", method_str.c_str());
+        return;
+    }
+
+    auto id = cJSON_GetObjectItem(json, "id");
+    if (id == nullptr || !cJSON_IsNumber(id)) {
+        ESP_LOGE(TAG, "Invalid id for method: %s", method_str.c_str());
+        return;
+    }
+    auto id_int = id->valueint;
+    
+    if (method_str == "tools/call") {
+        auto tool_name = cJSON_GetObjectItem(params, "name");
+        if (!cJSON_IsString(tool_name)) {
+            ESP_LOGE(TAG, "tools/call: Missing name");
+            ReplyErrorPro(id_int, "Missing name");
+            return;
+        }
+        auto tool_arguments = cJSON_GetObjectItem(params, "arguments");
+        if (tool_arguments != nullptr && !cJSON_IsObject(tool_arguments)) {
+            ESP_LOGE(TAG, "tools/call: Invalid arguments");
+            ReplyErrorPro(id_int, "Invalid arguments");
+            return;
+        }
+        DoToolCallPro(id_int, std::string(tool_name->valuestring), tool_arguments);
+    } else if (method_str == "tools/list") {
+        cJSON* common_item = cJSON_GetObjectItem(params, "common");
+        bool common = common_item ? cJSON_IsTrue(common_item) : true;  // 默认值为true
+        std::string json = "{\"tools\":[";
+        auto it = tools_.begin();
+        while (it != tools_.end()) {
+            if (!common && !(*it)->user_only()) {
+                ++it;
+                continue;
+            }
+            if (common && (*it)->user_only()) {
+                ++it;
+                continue;
+            }
+            std::string tool_json = "\"" + (*it)->name() + "\",";
+            json += tool_json;
+            ++it;
+        }
+        if (json.back() == ',') {
+            json.pop_back();
+        }
+        json += "]}";
+        ReplyResultPro(id_int, json);
+    } else {
+        ESP_LOGE(TAG, "Method not implemented: %s", method_str.c_str());
+        ReplyErrorPro(id_int, "Method not implemented: " + method_str);
+    } 
+}
+
+void McpServer::DoToolCallPro(int id, const std::string& tool_name, const cJSON* tool_arguments) {
+    auto tool_iter = std::find_if(tools_.begin(), tools_.end(), 
+                                 [&tool_name](const McpTool* tool) { 
+                                     return tool->name() == tool_name; 
+                                 });
+    
+    if (tool_iter == tools_.end()) {
+        ESP_LOGE(TAG, "tools/call: Unknown tool: %s", tool_name.c_str());
+        ReplyErrorPro(id, "Unknown tool: " + tool_name);
+        return;
+    }
+
+    PropertyList arguments = (*tool_iter)->properties();
+    try {
+        for (auto& argument : arguments) {
+            bool found = false;
+            if (cJSON_IsObject(tool_arguments)) {
+                auto value = cJSON_GetObjectItem(tool_arguments, argument.name().c_str());
+                if (argument.type() == kPropertyTypeBoolean && cJSON_IsBool(value)) {
+                    argument.set_value<bool>(value->valueint == 1);
+                    found = true;
+                } else if (argument.type() == kPropertyTypeInteger && cJSON_IsNumber(value)) {
+                    argument.set_value<int>(value->valueint);
+                    found = true;
+                } else if (argument.type() == kPropertyTypeString && cJSON_IsString(value)) {
+                    argument.set_value<std::string>(value->valuestring);
+                    found = true;
+                }
+            }
+
+            if (!argument.has_default_value() && !found) {
+                ESP_LOGE(TAG, "tools/call: Missing valid argument: %s", argument.name().c_str());
+                ReplyErrorPro(id, "Missing valid argument: " + argument.name());
+                return;
+            }
+        }
+    } catch (const std::exception& e) {
+        ESP_LOGE(TAG, "tools/call: %s", e.what());
+        ReplyErrorPro(id, e.what());
+        return;
+    }
+
+    // Use main thread to call the tool
+    auto& app = Application::GetInstance();
+    app.Schedule([this, id, tool_iter, arguments = std::move(arguments)]() {
+        try {
+            ReplyResultPro(id, (*tool_iter)->Call(arguments));
+        } catch (const std::exception& e) {
+            ESP_LOGE(TAG, "tools/call: %s", e.what());
+            ReplyErrorPro(id, e.what());
+        }
+    });
+}
+
+void McpServer::ReplyResultPro(int id, const std::string& result) {
+    std::string payload = "{\"jsonrpc\":\"2.0\",\"id\":";
+    payload += std::to_string(id) + ",\"result\":";
+    payload += result;
+    payload += "}";
+    Application::GetInstance().SendMcpMessagePro(payload);
+}
+
+void McpServer::ReplyErrorPro(int id, const std::string& message) {
+    std::string payload = "{\"jsonrpc\":\"2.0\",\"id\":";
+    payload += std::to_string(id);
+    payload += ",\"error\":{\"message\":\"";
+    payload += message;
+    payload += "\"}}";
+    Application::GetInstance().SendMcpMessagePro(payload);
 }

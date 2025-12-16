@@ -160,6 +160,26 @@ esp_err_t Ota::CheckVersion() {
     } else {
         ESP_LOGI(TAG, "No mqtt section found !");
     }
+    
+    // 新增 mqtt_pro
+    cJSON *mqtt_pro = cJSON_GetObjectItem(root, "mqtt_pro");
+    if (cJSON_IsObject(mqtt_pro)) {
+        Settings settings("mqtt_pro", true);
+        cJSON *item = NULL;
+        cJSON_ArrayForEach(item, mqtt_pro) {
+            if (cJSON_IsString(item)) {
+                if (settings.GetString(item->string) != item->valuestring) {
+                    settings.SetString(item->string, item->valuestring);
+                }
+            } else if (cJSON_IsNumber(item)) {
+                if (settings.GetInt(item->string) != item->valueint) {
+                    settings.SetInt(item->string, item->valueint);
+                }
+            }
+        }
+    } else {
+        ESP_LOGI(TAG, "No mqtt_pro section found !");
+    }
 
     has_websocket_config_ = false;
     cJSON *websocket = cJSON_GetObjectItem(root, "websocket");

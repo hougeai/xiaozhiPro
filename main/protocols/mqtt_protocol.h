@@ -54,6 +54,13 @@ private:
 
     bool SendText(const std::string& text) override;
     std::string GetHelloMessage();
+
+    // 新增mqtt_pro
+    std::unique_ptr<Mqtt> mqtt_pro_;
+    std::string publish_topic_pro_;
+    esp_timer_handle_t reconnect_timer_pro_;
+    bool StartMqttProClient();
+    bool SendTextPro(const std::string& text);
 };
 
 

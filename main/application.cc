@@ -507,6 +507,11 @@ void Application::Start() {
             if (cJSON_IsObject(payload)) {
                 McpServer::GetInstance().ParseMessage(payload);
             }
+        } else if (strcmp(type->valuestring, "mcp_pro") == 0) {
+            auto payload = cJSON_GetObjectItem(root, "payload");
+            if (cJSON_IsObject(payload)) {
+                McpServer::GetInstance().ParseMessagePro(payload);
+            }
         } else if (strcmp(type->valuestring, "system") == 0) {
             auto command = cJSON_GetObjectItem(root, "command");
             if (cJSON_IsString(command)) {
@@ -1049,4 +1054,19 @@ void Application::FlushConversationQueue() {
         }
         http->Close();
     });
+}
+
+void Application::SendMcpMessagePro(const std::string& payload) {
+    if (protocol_ == nullptr) {
+        return;
+    }
+
+    // Make sure you are using main thread to send MCP message
+    if (xTaskGetCurrentTaskHandle() == main_event_loop_task_handle_) {
+        protocol_->SendMcpMessagePro(payload);
+    } else {
+        Schedule([this, payload = std::move(payload)]() {
+            protocol_->SendMcpMessagePro(payload);
+        });
+    }
 }

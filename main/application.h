@@ -75,6 +75,8 @@ public:
     Esp32Music* music_ = nullptr;
     bool music_playing_ = false; // 音乐播放状态
     void FlushConversationQueue();
+    // pro
+    void SendMcpMessagePro(const std::string& payload);
 
 private:
     Application();
