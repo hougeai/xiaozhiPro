@@ -61,10 +61,10 @@ static const gc9a01_lcd_init_cmd_t gc9107_lcd_init_cmds[] = {
 #include "esp_lcd_gc9d01n.h"
 #endif
 
-#define TAG "zhengchen_eye"
+#define TAG "ZHENGCHEN_EYE"
 
 
-class zhengchen_eye : public DualNetworkBoard {
+class ZHENGCHEN_EYE : public DualNetworkBoard {
 private:
     i2c_master_bus_handle_t i2c_bus_; // I2C总线句柄
     Button boot_button_;
@@ -115,7 +115,7 @@ private:
     }
 
     static void touch_read_task(void* arg) {
-        zhengchen_eye* self = static_cast<zhengchen_eye*>(arg);
+        ZHENGCHEN_EYE* self = static_cast<ZHENGCHEN_EYE*>(arg);
         uint32_t last_touch4 = 0, last_touch5 = 0;
         int retry_count = 0;
         while (1) {
@@ -253,7 +253,7 @@ private:
     }
 
 public:
-    zhengchen_eye() : DualNetworkBoard(ML307_TX_PIN, ML307_RX_PIN),
+    ZHENGCHEN_EYE() : DualNetworkBoard(ML307_TX_PIN, ML307_RX_PIN),
         boot_button_(BOOT_BUTTON_GPIO){
         InitializePowerManager();
         InitializePowerSaveTimer();
@@ -331,4 +331,4 @@ public:
     }
 };
 
-DECLARE_BOARD(zhengchen_eye);
+DECLARE_BOARD(ZHENGCHEN_EYE);
