@@ -19,7 +19,7 @@ void display_utils::LoadIdleInfoSettings(std::string* idle_info_texts, std::vect
     http->SetHeader("Content-Type", "application/json");
     http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
     std::string url = std::string(CONFIG_SERVER_URL) + "/device_display";
-    ESP_LOGI(TAG, "Fetching display info from: %s", url.c_str());
+    // ESP_LOGI(TAG, "Fetching display info from: %s", url.c_str());
     
     if (http->Open("GET", url)) {
         int status_code = http->GetStatusCode();

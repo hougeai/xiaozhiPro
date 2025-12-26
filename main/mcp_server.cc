@@ -180,7 +180,7 @@ void McpServer::AddCommonTools() {
                 ESP_LOGE(TAG, "AlarmManager is nullptr");
                  return R"({"success":false,"message":"AlarmManager is not initialized"})";
             }
-            ESP_LOGI(TAG, "SetAlarm");
+            // ESP_LOGI(TAG, "SetAlarm");
             int delay = properties["delay"].value<int>();
             int hour = properties["hour"].value<int>();
             int minute = properties["minute"].value<int>();

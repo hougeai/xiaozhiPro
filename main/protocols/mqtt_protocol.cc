@@ -96,7 +96,7 @@ bool MqttProtocol::StartMqttProClient() {
     });
 
     mqtt_pro_->OnMessage([this](const std::string& topic, const std::string& payload) {
-        ESP_LOGI(TAG, "MQTT Pro received message on topic %s: %s", topic.c_str(), payload.c_str());
+        // ESP_LOGI(TAG, "MQTT Pro received message on topic %s: %s", topic.c_str(), payload.c_str());
         // 处理 mqtt_pro 消息
         cJSON* root = cJSON_Parse(payload.c_str());
         if (root == nullptr) {
@@ -113,7 +113,7 @@ bool MqttProtocol::StartMqttProClient() {
         cJSON_Delete(root);
     });
 
-    ESP_LOGI(TAG, "Connecting to mqtt pro endpoint %s port %d", endpoint.c_str(), port);
+    // ESP_LOGI(TAG, "Connecting to mqtt pro endpoint %s port %d", endpoint.c_str(), port);
     
     if (!mqtt_pro_->Connect(endpoint, port, client_id, username, password)) {
         ESP_LOGE(TAG, "Failed to connect to mqtt pro endpoint, code=%d", mqtt_pro_->GetLastError());

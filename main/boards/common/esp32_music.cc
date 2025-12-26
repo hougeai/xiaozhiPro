@@ -84,7 +84,7 @@ std::string Esp32Music::SinglePlay(const std::string& song_name, const std::stri
     std::string base_url = std::string(CONFIG_SERVER_URL) + "/device_music";
     std::string full_url = base_url + "?song=" + url_encode(song_name) + "&singer=" + url_encode(artist_name);
     
-    ESP_LOGI(TAG, "Request URL: %s", full_url.c_str());
+    // ESP_LOGI(TAG, "Request URL: %s", full_url.c_str());
     
     // 使用Board提供的HTTP客户端
     auto network = Board::GetInstance().GetNetwork();
@@ -143,7 +143,7 @@ std::string Esp32Music::SinglePlay(const std::string& song_name, const std::stri
                 // 处理歌词URL
                 if (cJSON_IsString(lyric_url) && lyric_url->valuestring && strlen(lyric_url->valuestring) > 0) {
                     current_lyric_url_ = lyric_url->valuestring;
-                    ESP_LOGI(TAG, "Loading lyrics for: %s (lyrics display mode)", song_name.c_str());
+                        ESP_LOGI(TAG, "Loading lyrics for: %s", song_name.c_str());
                     if (!DownloadLyrics(current_lyric_url_)) {
                         ESP_LOGW(TAG, "Failed to download lyrics, continuing without lyrics");
                     }
@@ -229,7 +229,8 @@ bool Esp32Music::StartStreaming(const std::string& music_url) {
         return false;
     }
 
-    ESP_LOGI(TAG, "Streaming tasks started from: %s", music_url.c_str());
+    // ESP_LOGI(TAG, "Streaming tasks started from: %s", music_url.c_str());
+    ESP_LOGI(TAG, "Streaming tasks started");
     return true;
 }
 
@@ -741,7 +742,7 @@ size_t Esp32Music::SkipId3Tag(uint8_t* data, size_t size) {
 
 // 下载歌词
 bool Esp32Music::DownloadLyrics(const std::string& lyric_url) {
-    ESP_LOGI(TAG, "Downloading lyrics from: %s", lyric_url.c_str());
+    // ESP_LOGI(TAG, "Downloading lyrics from: %s", lyric_url.c_str());
     
     if (lyric_url.empty()) {
         return false;
