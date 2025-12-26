@@ -1383,7 +1383,7 @@ void LcdDisplay::ShowIdleInfo() {
     }
 
     if (valid_idle_indices_.empty()) {
-        ESP_LOGI(TAG, "No idle info to display");
+        // ESP_LOGI(TAG, "No idle info to display");
         return;
     }
     

@@ -461,6 +461,11 @@ void Application::Start() {
                     if (device_state_ == kDeviceStateIdle || device_state_ == kDeviceStateListening) {
                         SetDeviceState(kDeviceStateSpeaking);
                     }
+                    else if (device_state_ == kDeviceStateAlarm) {
+                        alarm_m_->ClearRing();
+                        SetDeviceState(kDeviceStateSpeaking);
+                        ESP_LOGI(TAG, "TTS start, clear alarm");
+                    }
                 });
             } else if (strcmp(state->valuestring, "stop") == 0) {
                 Schedule([this]() {
@@ -1069,4 +1074,12 @@ void Application::SendMcpMessagePro(const std::string& payload) {
             protocol_->SendMcpMessagePro(payload);
         });
     }
+}
+
+bool Application::SendCommand(const std::string& text) {
+    if (protocol_ && device_state_ == kDeviceStateListening) {   
+        protocol_->SendWakeWordDetected(text);
+        return true;
+    }
+    return false;
 }

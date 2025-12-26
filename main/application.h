@@ -77,6 +77,7 @@ public:
     void FlushConversationQueue();
     // pro
     void SendMcpMessagePro(const std::string& payload);
+    bool SendCommand(const std::string& text);
 
 private:
     Application();

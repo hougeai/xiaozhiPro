@@ -762,6 +762,16 @@ void McpServer::AddUserOnlyTools() {
             Application::GetInstance().WakeWordInvoke(reason);
             return true;
         }); 
+    // send command
+    AddUserOnlyTool("self.send_command", "Send short command to the device",
+        PropertyList({
+            Property("text", kPropertyTypeString, "Text to send"),
+        }),
+        [this](const PropertyList& properties) -> ReturnValue {
+            std::string text = properties["text"].value<std::string>();
+            ESP_LOGI(TAG, "Remote command: %s", text.c_str());
+            return Application::GetInstance().SendCommand(text);
+        }); 
 }
 
 void McpServer::AddTool(McpTool* tool) {

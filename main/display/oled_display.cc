@@ -569,7 +569,7 @@ void OledDisplay::ShowIdleInfo() {
             // 恢复content_的布局设置使左侧区域居中
             lv_obj_set_flex_flow(content_, LV_FLEX_FLOW_ROW);
             lv_obj_set_style_flex_main_place(content_, LV_FLEX_ALIGN_CENTER, 0);
-            ESP_LOGI(TAG, "No idle info to display, showing emotion icon only");
+            // ESP_LOGI(TAG, "No idle info to display, showing emotion icon only");
             return;
         }
         // 如果有可见标签，调整content_的布局以适应垂直排列
