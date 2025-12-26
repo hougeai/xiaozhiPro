@@ -82,7 +82,7 @@ bool MqttProtocol::StartMqttProClient() {
     publish_topic_pro_ = settings.GetString("publish_topic");
 
     auto network = Board::GetInstance().GetNetwork();
-    mqtt_pro_ = network->CreateMqtt(0);
+    mqtt_pro_ = network->CreateMqtt(1);
     mqtt_pro_->SetKeepAlive(keepalive_interval);
 
     mqtt_pro_->OnDisconnected([this]() {
