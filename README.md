@@ -63,7 +63,7 @@ MCP绑定：
 
 ### 固件下载中心
 
-[小智Pro最新固件下载（免费）](https://g5b4uupmby.feishu.cn/wiki/IfTawES0mi0YTqk8GQ4cw4qOnD3)
+[小智Pro最新固件下载（免费）](https://github.com/hougeai/xiaozhiPro/releases)
 
 ## 常见问题 ❓
 
@@ -74,12 +74,31 @@ MCP绑定：
 ![小智Pro个人版反馈](qrcode.webp)
 
 ## 更新日志 📅
+
+### 2025.12.25
+>【小智Pro】服务端升级
+- API接口全面开放
+  - 新增远程控制API
+  - 新增设备相关API
+  - 新增知识库API
+- vitepress搭建官方文档，飞书doc将不再维护
+
+### 2025.12.20 - v2.0.5.1
+>【小智Pro】固件适配 v2.0.5
+- 全面适配小智官方仓库收录的开发板型号
+- 固件下载请移步：https://github.com/hougeai/xiaozhiPro/releases
+
 ### 2025.12.05
 >【小智Pro】服务端升级
 
 - 新增接入点MCP一级目录：支持通过小智控制台的MCP接入点接入任意MCP服务：
   - MCP 广场：汇集全网热门MCP服务，创建、管理和部署您的 MCP 服务
   - MCP 绑定：管理设备的 MCP 服务：绑定/解绑/接入
+
+### 2025.11.08 - v2.0.4.2
+【小智Pro】固件适配 v2.0.4
+- 固件适配：适配小智官方最新 v2.0.4
+- 开发板支持：新增立创·实战派ESP32-S3开发板；九川智能；ESP-SparkBot开发板（坦克）
 
 ### 2025.10.29 
 >【小智Pro】服务端升级
