@@ -7,6 +7,7 @@
 #include <web_socket.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
+#include <mqtt.h>
 
 #define WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT (1 << 0)
 
@@ -29,6 +30,13 @@ private:
     void ParseServerHello(const cJSON* root);
     bool SendText(const std::string& text) override;
     std::string GetHelloMessage();
+
+    // 添加MQTT Pro相关成员和方法
+    std::unique_ptr<Mqtt> mqtt_pro_;
+    std::string publish_topic_pro_ = "";
+    esp_timer_handle_t reconnect_timer_pro_ = nullptr;
+    bool StartMqttProClient();
+    bool SendTextPro(const std::string& text);
 };
 
 #endif

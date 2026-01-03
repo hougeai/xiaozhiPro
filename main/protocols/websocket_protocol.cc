@@ -14,13 +14,35 @@
 
 WebsocketProtocol::WebsocketProtocol() {
     event_group_handle_ = xEventGroupCreate();
+
+    // Initialize reconnect timer for MQTT Pro
+    esp_timer_create_args_t reconnect_timer_pro_args = {
+        .callback = [](void* arg) {
+            WebsocketProtocol* protocol = (WebsocketProtocol*)arg;
+            auto& app = Application::GetInstance();
+            if (app.GetDeviceState() == kDeviceStateIdle) {
+                ESP_LOGI(TAG, "Reconnecting to MQTT Pro server");
+                app.Schedule([protocol]() {
+                    protocol->StartMqttProClient();
+                });
+            }
+        },
+        .arg = this,
+    };
+    esp_timer_create(&reconnect_timer_pro_args, &reconnect_timer_pro_);
 }
 
 WebsocketProtocol::~WebsocketProtocol() {
+    if (reconnect_timer_pro_ != nullptr) {
+        esp_timer_stop(reconnect_timer_pro_);
+        esp_timer_delete(reconnect_timer_pro_);
+    }
+    mqtt_pro_.reset();
     vEventGroupDelete(event_group_handle_);
 }
 
 bool WebsocketProtocol::Start() {
+    StartMqttProClient(); // 先连接到mqtt pro
     // Only connect to server when audio channel is needed
     return true;
 }
@@ -250,4 +272,69 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
     }
 
     xEventGroupSetBits(event_group_handle_, WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT);
+}
+
+bool WebsocketProtocol::StartMqttProClient() {
+    Settings settings("mqtt_pro", false);
+    auto endpoint = settings.GetString("endpoint");
+    auto port = settings.GetInt("port");
+    auto client_id = settings.GetString("client_id");
+    auto username = settings.GetString("username");
+    auto password = settings.GetString("password");
+    int keepalive_interval = settings.GetInt("keepalive", 240);
+    publish_topic_pro_ = settings.GetString("publish_topic");
+
+    auto network = Board::GetInstance().GetNetwork();
+    mqtt_pro_ = network->CreateMqtt(1);
+    mqtt_pro_->SetKeepAlive(keepalive_interval);
+
+    mqtt_pro_->OnDisconnected([this]() {
+        ESP_LOGI(TAG, "MQTT Pro disconnected");
+        esp_timer_start_once(reconnect_timer_pro_, 60000 * 1000);
+    });
+
+    mqtt_pro_->OnConnected([this]() {
+        ESP_LOGI(TAG, "MQTT Pro connected");
+        esp_timer_stop(reconnect_timer_pro_);
+    });
+
+    mqtt_pro_->OnMessage([this](const std::string& topic, const std::string& payload) {
+        cJSON* root = cJSON_Parse(payload.c_str());
+        if (root == nullptr) {
+            ESP_LOGE(TAG, "Failed to parse mqtt pro json message %s", payload.c_str());
+            return;
+        }
+        
+        cJSON* type = cJSON_GetObjectItem(root, "type");
+        if (type != nullptr && cJSON_IsString(type)) {
+            if (strcmp(type->valuestring, "hello") == 0) {
+                ESP_LOGI(TAG, "MQTT Pro hello message received");
+            } else if (on_incoming_json_ != nullptr) {
+                on_incoming_json_(root);
+            }
+        } else {
+            ESP_LOGE(TAG, "Message type is invalid in MQTT Pro message");
+        }
+        cJSON_Delete(root);
+    });
+
+    if (!mqtt_pro_->Connect(endpoint, port, client_id, username, password)) {
+        ESP_LOGE(TAG, "Failed to connect to mqtt pro endpoint, code=%d", mqtt_pro_->GetLastError());
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Connected to mqtt pro endpoint");
+    return true;
+}
+
+bool WebsocketProtocol::SendTextPro(const std::string& text) {
+    if (publish_topic_pro_.empty()) {
+        return false;
+    }
+    if (!mqtt_pro_->Publish(publish_topic_pro_, text)) {
+        ESP_LOGE(TAG, "Failed to publish message to pro: %s", text.c_str());
+        SetError(Lang::Strings::SERVER_ERROR);
+        return false;
+    }
+    return true;
 }
