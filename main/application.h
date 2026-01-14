@@ -180,7 +180,6 @@ private:
     void ShowActivationCode(const std::string& code, const std::string& message);
     void SetListeningMode(ListeningMode mode);
     
-    bool alarm_triggered_ = false;
     // 对话记录上传相关
     std::string current_stt_text_;     // 当前轮次的用户输入
     std::string current_tts_text_;     // 当前轮次的助手回复

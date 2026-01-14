@@ -252,6 +252,24 @@ void Application::Run() {
             if (clock_ticks_ % 10 == 0) {
                 SystemInfo::PrintHeapStats();
             }
+            if ((alarm_m_ != nullptr) && (alarm_m_->IsRing())) {
+                // 闹钟来了
+                auto state = GetDeviceState();
+                ESP_LOGI(TAG, "Alarm coming, current state: %s", state_machine_.GetStateName(state));
+                if (state != kDeviceStateAlarm){
+                    ESP_LOGI(TAG, "Alarm state not set");
+                    if (state == kDeviceStateSpeaking) {
+                        AbortSpeaking(kAbortReasonNone);
+                    } else if (state == kDeviceStateListening) {
+                        SetDeviceState(kDeviceStateIdle);
+                    }
+                    SetDeviceState(kDeviceStateAlarm);
+                } else {
+                    // 在闹钟状态且音频服务空闲：播放闹钟音乐
+                    ESP_LOGI(TAG, "Alarm ring, playing sound %d", (int)audio_service_.IsIdle());
+                    if (audio_service_.IsIdle()) PlaySound(Lang::Sounds::OGG_RING);
+                }
+            }
         }
     }
 }
@@ -314,6 +332,18 @@ void Application::HandleActivationDoneEvent() {
     ota_.reset();
     auto& board = Board::GetInstance();
     board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+
+    // 添加 alarm 实例
+    if (has_server_time_) {
+        ESP_LOGI(TAG, "Server time synchronized, start alarm manager");
+        alarm_m_ = new AlarmManager();
+    } else {
+        ESP_LOGI(TAG, "Server time not synchronized, alarm manager disabled");
+        alarm_m_ = nullptr;
+    }
+    // 添加 music 实例
+    music_ = new Esp32Music();
+    ESP_LOGI(TAG, "Music player initialized");
 }
 
 void Application::ActivationTask() {
@@ -510,7 +540,7 @@ void Application::InitializeProtocol() {
         Schedule([this]() {
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
-            if(device_state_ != kDeviceStateAlarm) {
+            if(GetDeviceState() != kDeviceStateAlarm) {
                 SetDeviceState(kDeviceStateIdle);
             }
         });
@@ -664,18 +694,6 @@ void Application::DismissAlert() {
         display->SetEmotion("neutral");
         display->SetChatMessage("system", "");
     }
-    // 添加 alarm 实例
-    if (has_server_time_) {
-        ESP_LOGI(TAG, "Server time synchronized, start alarm manager");
-        alarm_m_ = new AlarmManager();
-    } else {
-        ESP_LOGI(TAG, "Server time not synchronized, alarm manager disabled");
-        alarm_m_ = nullptr;
-    }
-    // 添加 music 实例
-    music_ = new Esp32Music();
-    ESP_LOGI(TAG, "Music player initialized");
-
 }
 
 void Application::ToggleChatState() {
@@ -782,6 +800,15 @@ void Application::HandleWakeWordDetectedEvent() {
     auto state = GetDeviceState();
     
     if (state == kDeviceStateIdle) {
+        if (music_ && music_playing_) {
+            ESP_LOGI(TAG, "Stopping music streaming due to wake word detected");
+            music_->StopLoopPlay();
+            audio_service_.ResetDecoder();
+            audio_service_.EnableVoiceProcessing(false);
+            vTaskDelay(pdMS_TO_TICKS(100));
+            audio_service_.EnableWakeWordDetection(true);
+            return;
+        }
         audio_service_.EncodeWakeWord();
 
         if (!protocol_->IsAudioChannelOpened()) {
@@ -813,7 +840,7 @@ void Application::HandleWakeWordDetectedEvent() {
     } else if (state == kDeviceStateActivating) {
         // Restart the activation check if the wake word is detected during activation
         SetDeviceState(kDeviceStateIdle);
-    } else if (device_state_ == kDeviceStateAlarm){
+    } else if (state == kDeviceStateAlarm){
         alarm_m_->ClearRing();
         ESP_LOGI(TAG, "Wake word detected in alarm state, clear alarm");
         SetDeviceState(kDeviceStateIdle);
@@ -878,6 +905,14 @@ void Application::HandleStateChangedEvent() {
             audio_service_.EnableVoiceProcessing(false);
             audio_service_.EnableWakeWordDetection(false);
             break;
+        case kDeviceStateAlarm: {
+            ESP_LOGI(TAG, "Before display->SetStatus (alarm)");
+            std::string status = std::string(Lang::Strings::ALARM) + alarm_m_->GetRingName();
+            display->SetStatus(status.c_str());
+            audio_service_.EnableVoiceProcessing(false);
+            audio_service_.EnableWakeWordDetection(true);
+            break;
+        }
         default:
             // Do nothing
             break;
@@ -1150,22 +1185,17 @@ void Application::FlushConversationQueue() {
 }
 
 void Application::SendMcpMessagePro(const std::string& payload) {
-    if (protocol_ == nullptr) {
-        return;
-    }
-
-    // Make sure you are using main thread to send MCP message
-    if (xTaskGetCurrentTaskHandle() == main_event_loop_task_handle_) {
-        protocol_->SendMcpMessagePro(payload);
-    } else {
-        Schedule([this, payload = std::move(payload)]() {
+    // Always schedule to run in main task for thread safety
+    Schedule([this, payload = std::move(payload)]() {
+        if (protocol_) {
             protocol_->SendMcpMessagePro(payload);
-        });
-    }
+        }
+    });
+    
 }
 
 bool Application::SendCommand(const std::string& text) {
-    if (protocol_ && device_state_ == kDeviceStateListening) {   
+    if (protocol_ && GetDeviceState() == kDeviceStateListening) {   
         protocol_->SendWakeWordDetected(text);
         return true;
     }
