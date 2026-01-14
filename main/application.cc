@@ -730,6 +730,15 @@ void Application::HandleToggleChatEvent() {
     }
 
     if (state == kDeviceStateIdle) {
+        if (music_ && music_playing_) {
+            ESP_LOGI(TAG, "Stopping music streaming due to wake word detected");
+            music_->StopLoopPlay();
+            audio_service_.ResetDecoder();
+            audio_service_.EnableVoiceProcessing(false);
+            vTaskDelay(pdMS_TO_TICKS(100));
+            audio_service_.EnableWakeWordDetection(true);
+            return;
+        }
         if (!protocol_->IsAudioChannelOpened()) {
             SetDeviceState(kDeviceStateConnecting);
             if (!protocol_->OpenAudioChannel()) {

@@ -246,6 +246,14 @@ private:
             // power_save_timer_->WakeUp();
             ESP_LOGI(TAG, "Boot button clicked, toggle chat state");
             auto& app = Application::GetInstance();
+            if (GetNetworkType() == NetworkType::WIFI) {
+                if (app.GetDeviceState() == kDeviceStateStarting) {
+                    // cast to WifiBoard
+                    auto& wifi_board = static_cast<WifiBoard&>(GetCurrentBoard());
+                    wifi_board.EnterWifiConfigMode();
+                    return;
+                }
+            }
             app.ToggleChatState(); // 如果idle切到listening，speaking则打断，alarm则停止
         });
         // 双击切换网络

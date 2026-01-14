@@ -188,6 +188,14 @@ private:
             // power_save_timer_->WakeUp();
             ESP_LOGI(TAG, "Boot button clicked, toggle chat state");
             auto& app = Application::GetInstance();
+            if (GetNetworkType() == NetworkType::WIFI) {
+                if (app.GetDeviceState() == kDeviceStateStarting) {
+                    // cast to WifiBoard
+                    auto& wifi_board = static_cast<WifiBoard&>(GetCurrentBoard());
+                    wifi_board.EnterWifiConfigMode();
+                    return;
+                }
+            }
             app.ToggleChatState(); // 如果idle切到listening，speaking则打断，alarm则停止
         });
         // 双击切换网络
@@ -311,21 +319,6 @@ public:
     virtual Backlight* GetBacklight() override {
         static PwmBacklight backlight(DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_OUTPUT_INVERT);
         return &backlight;
-    }
-
-    virtual void SetPowerSaveMode(bool enabled) override {
-        auto backlight = GetBacklight();
-        if (backlight != nullptr) {
-            if (!enabled) {
-                ESP_LOGI(TAG, "Exiting power save mode, restoring brightness to 100");
-                backlight->SetBrightness(100);
-            } else {
-                ESP_LOGI(TAG, "Entering power save mode, reducing brightness to 10");
-                backlight->SetBrightness(10);
-            }
-        } else {
-            ESP_LOGW(TAG, "Backlight is null in SetPowerSaveMode");
-        }
     }
 };
 

@@ -81,24 +81,11 @@ private:
         boot_button_.OnClick([this]() {
             power_save_timer_->WakeUp();
             auto& app = Application::GetInstance();
-            if (app.GetDeviceState() == kDeviceStateStarting && !WifiStation::GetInstance().IsConnected()) {
-                ResetWifiConfiguration();
+            if (app.GetDeviceState() == kDeviceStateStarting) {
+                EnterWifiConfigMode();
+                return;
             }
             app.ToggleChatState();
-        });
-
-        // 设置开机按钮的长按事件（直接进入配网模式）
-        boot_button_.OnLongPress([this]() {
-            // 唤醒电源保存定时器
-            power_save_timer_->WakeUp();
-            // 获取应用程序实例
-            auto& app = Application::GetInstance();
-            
-            // 进入配网模式
-            app.SetDeviceState(kDeviceStateWifiConfiguring);
-            
-            // 重置WiFi配置以确保进入配网模式
-            ResetWifiConfiguration();
         });
 
         volume_up_button_.OnClick([this]() {
@@ -215,13 +202,6 @@ public:
     virtual bool GetTemperature(float& esp32temp)  override {
         esp32temp = power_manager_->GetTemperature();
         return true;
-    }
-
-    virtual void SetPowerSaveMode(bool enabled) override {
-        if (!enabled) {
-            power_save_timer_->WakeUp();
-        }
-        WifiBoard::SetPowerSaveMode(enabled);
     }
 };
 

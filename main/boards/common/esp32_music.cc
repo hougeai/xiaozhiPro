@@ -94,7 +94,7 @@ std::string Esp32Music::SinglePlay(const std::string& song_name, const std::stri
     http->SetHeader("User-Agent", "ESP32-Music-Player/1.0");
     http->SetHeader("Accept", "application/json");
     http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
-    
+    http->SetTimeout(10000); // 设置超时时间
     // 打开GET连接
     if (!http->Open("GET", full_url)) {
         ESP_LOGE(TAG, "Failed to connect to music API");
