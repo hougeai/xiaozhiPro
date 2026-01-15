@@ -75,6 +75,27 @@ MCP绑定：
 
 ## 更新日志 📅
 
+### 2026.01.15 - v2.1.0.1
+
+> 【小智Pro】固件适配 v2.1.0
+
+- 音乐播放支持 [唤醒词/唤醒按键] 停止播放
+- 修复 OTA 固件下载失败的问题
+- 全面适配小智最新固件版本v2.1.0
+- 固件下载请移步：<a :href="theme.nav[2].link" target="_blank">{{theme.nav[2].link}}</a>
+
+### 2026.01.05
+
+> 【小智Pro】服务端升级
+
+- 支持固件在线更新（设备端固件要求：v2.0.5 以上）
+  - 自定义唤醒词
+  - 自定义表情包
+  - 自定义背景图
+
+![固件在线更新](https://objectstorageapi.ap-southeast-1.clawcloudrun.com/jt1m1jia-xiaozhi-pro/docs/1564edb6-35c4-47a5-bc91-3bf4a76b7e8e.webp)
+
+
 ### 2025.12.25
 >【小智Pro】服务端升级
 - API接口全面开放
