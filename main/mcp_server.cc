@@ -278,9 +278,17 @@ void McpServer::AddCommonTools() {
             http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
             http->SetTimeout(5000); // 设置超时时间
             // 构造请求的JSON数据
+            std::string query = properties["query"].value<std::string>();
+            if (query.empty()) {
+                return R"({"success":false,"message":"Query is empty"})";
+            }
             cJSON* json_data = cJSON_CreateObject();
-            cJSON_AddStringToObject(json_data, "query", properties["query"].value<std::string>().c_str());
+            cJSON_AddStringToObject(json_data, "query", query.c_str());
             char* json_string = cJSON_PrintUnformatted(json_data);
+            if (!json_string) {
+                cJSON_Delete(json_data);
+                return R"({"success":false,"message":"Failed to serialize JSON"})";
+            }
             std::string data(json_string);
             cJSON_free(json_string);
             cJSON_Delete(json_data);
@@ -293,6 +301,7 @@ void McpServer::AddCommonTools() {
             }
             int status_code = http->GetStatusCode();
             std::string response = http->ReadAll();
+            ESP_LOGI(TAG, "Mem response: %s", response.c_str());
             cJSON* root = cJSON_Parse(response.c_str());
             http->Close();
             if (status_code != 200) {
@@ -330,6 +339,79 @@ void McpServer::AddCommonTools() {
             // 构造简化后的响应
             cJSON* result = cJSON_CreateObject();
             cJSON_AddItemToObject(result, "data", cJSON_CreateString(data_str.c_str()));
+            cJSON_AddBoolToObject(result, "success", true);
+            char* result_json = cJSON_PrintUnformatted(result);
+            std::string result_str(result_json);
+            cJSON_free(result_json);
+            cJSON_Delete(result);
+            return result_str;
+        });
+    // 长期记忆
+    AddTool("self.mem.search",
+        "在回答和用户有关的问题前，请利用恰当的检索词在用户的个人记忆库中搜索和当前话题有关的记忆。"
+        "Args:"
+        "query: str, 检索词，多个检索词用空格隔开",
+        PropertyList({
+            Property("query", kPropertyTypeString)
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
+            http->SetHeader("Content-Type", "application/json");
+            http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
+            http->SetTimeout(5000); // 设置超时时间
+            // 构造请求的JSON数据
+            std::string query = properties["query"].value<std::string>();
+            if (query.empty()) {
+                return R"({"success":false,"message":"Query is empty"})";
+            }
+            cJSON* json_data = cJSON_CreateObject();
+            cJSON_AddStringToObject(json_data, "query", query.c_str());
+            char* json_string = cJSON_PrintUnformatted(json_data);
+            if (!json_string) {
+                cJSON_Delete(json_data);
+                return R"({"success":false,"message":"Failed to serialize JSON"})";
+            }
+            std::string data(json_string);
+            cJSON_free(json_string);
+            cJSON_Delete(json_data);
+            http->SetContent(std::move(data));
+            std::string base_url = std::string(CONFIG_SERVER_URL) + "/mem_search";
+    
+            if (!http->Open("POST", base_url)) {
+                ESP_LOGE(TAG, "Failed to open HTTP connection");
+                return R"({"success":false,"message":"Failed to connect to mem"})";
+            }
+            int status_code = http->GetStatusCode();
+            std::string response = http->ReadAll();
+            // ESP_LOGI(TAG, "Mem response: %s", response.c_str());
+            cJSON* root = cJSON_Parse(response.c_str());
+            http->Close();
+            if (status_code != 200) {
+                ESP_LOGE(TAG, "Mem request failed with status code: %d", status_code);
+                if (root) {
+                    cJSON* msg = cJSON_GetObjectItem(root, "msg");
+                    std::string error_msg = msg ? msg->valuestring : "Unknown error";
+                    ESP_LOGE(TAG, "Mem error message: %s", error_msg.c_str());
+                    cJSON_Delete(root);
+                    return std::string(R"({"success":false,"message":")" + error_msg + R"("})");
+                }
+                return R"({"success":false,"message":"Mem request failed"})";
+            }
+            
+            if (!root) {
+                ESP_LOGE(TAG, "Failed to parse mem response");
+                return R"({"success":false,"message":"Failed to parse mem response"})";
+            }
+            cJSON* data_item = cJSON_GetObjectItem(root, "data");
+            if (!data_item || !cJSON_IsString(data_item)) {
+                cJSON_Delete(root);
+                return R"({"success":false,"message":"Empty"})";
+            }
+            std::string data_str = data_item->valuestring;
+            cJSON_Delete(root);
+            // 构造简化后的响应
+            cJSON* result = cJSON_CreateObject();
+            cJSON_AddStringToObject(result, "data", data_str.c_str());
             cJSON_AddBoolToObject(result, "success", true);
             char* result_json = cJSON_PrintUnformatted(result);
             std::string result_str(result_json);
@@ -452,6 +534,10 @@ void McpServer::AddCommonTools() {
             cJSON* json_data = cJSON_CreateObject();
             cJSON_AddStringToObject(json_data, "city", properties["city"].value<std::string>().c_str());
             char* json_string = cJSON_PrintUnformatted(json_data);
+            if (!json_string) {
+                cJSON_Delete(json_data);
+                return R"({"success":false,"message":"Failed to serialize JSON"})";
+            }
             std::string data(json_string);
             cJSON_free(json_string);
             cJSON_Delete(json_data);
@@ -464,6 +550,7 @@ void McpServer::AddCommonTools() {
             }
             int status_code = http->GetStatusCode();
             std::string response = http->ReadAll();
+            ESP_LOGI(TAG, "Mem response: %s", response.c_str());
             cJSON* root = cJSON_Parse(response.c_str());
             http->Close();
             if (status_code != 200) {
