@@ -347,8 +347,8 @@ void McpServer::AddCommonTools() {
             return result_str;
         });
     // 长期记忆
-    AddTool("self.mem.search",
-        "在回答和用户有关的问题前，请利用恰当的检索词在用户的个人记忆库中搜索和当前话题有关的记忆。"
+    AddTool("self.memory.search",
+        "搜索用户个人记忆，获取与当前话题相关的历史信息。以下场景必须调用此工具：1) 用户提到'之前/上次/以前'等时间回溯词；2) 用户提及具体人名、地点等专有名词且可能存在于记忆中；3) 用户要求继续/修改之前的讨论；4) 回答需结合用户个人偏好、习惯或历史背景"
         "Args:"
         "query: str, 检索词，多个检索词用空格隔开",
         PropertyList({
@@ -401,6 +401,74 @@ void McpServer::AddCommonTools() {
             if (!root) {
                 ESP_LOGE(TAG, "Failed to parse mem response");
                 return R"({"success":false,"message":"Failed to parse mem response"})";
+            }
+            cJSON* data_item = cJSON_GetObjectItem(root, "data");
+            if (!data_item || !cJSON_IsString(data_item)) {
+                cJSON_Delete(root);
+                return R"({"success":false,"message":"Empty"})";
+            }
+            std::string data_str = data_item->valuestring;
+            cJSON_Delete(root);
+            // 构造简化后的响应
+            cJSON* result = cJSON_CreateObject();
+            cJSON_AddStringToObject(result, "data", data_str.c_str());
+            cJSON_AddBoolToObject(result, "success", true);
+            char* result_json = cJSON_PrintUnformatted(result);
+            std::string result_str(result_json);
+            cJSON_free(result_json);
+            cJSON_Delete(result);
+            return result_str;
+        });
+    // 视觉理解
+    AddTool("self.vision.analysis",
+        "当用户要求你看东西或打开摄像头时，请调用此工具获取视觉分析内容。"
+        "Args:\n"
+        "  `question`: The question that you want to ask about the vision.\n"
+        "Return:\n"
+        "  A JSON object that provides the vision information.",
+        PropertyList({
+            Property("question", kPropertyTypeString)
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
+            http->SetHeader("Content-Type", "application/json");
+            http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
+            http->SetTimeout(8000); // 设置超时时间
+            // 构造请求的JSON数据
+            std::string question = properties["question"].value<std::string>();
+            cJSON* json_data = cJSON_CreateObject();
+            cJSON_AddStringToObject(json_data, "question", question.c_str());
+            char* json_string = cJSON_PrintUnformatted(json_data);
+            std::string data(json_string);
+            cJSON_free(json_string);
+            cJSON_Delete(json_data);
+            http->SetContent(std::move(data));
+            std::string base_url = std::string(CONFIG_SERVER_URL) + "/api/v1/vision/analysis";
+    
+            if (!http->Open("POST", base_url)) {
+                ESP_LOGE(TAG, "Failed to open HTTP connection");
+                return R"({"success":false,"message":"Failed to connect to vision"})";
+            }
+            int status_code = http->GetStatusCode();
+            std::string response = http->ReadAll();
+            // ESP_LOGI(TAG, "Mem response: %s", response.c_str());
+            cJSON* root = cJSON_Parse(response.c_str());
+            http->Close();
+            if (status_code != 200) {
+                ESP_LOGE(TAG, "Vision request failed with status code: %d", status_code);
+                if (root) {
+                    cJSON* msg = cJSON_GetObjectItem(root, "msg");
+                    std::string error_msg = msg ? msg->valuestring : "Unknown error";
+                    ESP_LOGE(TAG, "Vision error message: %s", error_msg.c_str());
+                    cJSON_Delete(root);
+                    return std::string(R"({"success":false,"message":")" + error_msg + R"("})");
+                }
+                return R"({"success":false,"message":"Vision request failed"})";
+            }
+            
+            if (!root) {
+                ESP_LOGE(TAG, "Failed to parse Vision response");
+                return R"({"success":false,"message":"Failed to parse Vision response"})";
             }
             cJSON* data_item = cJSON_GetObjectItem(root, "data");
             if (!data_item || !cJSON_IsString(data_item)) {
