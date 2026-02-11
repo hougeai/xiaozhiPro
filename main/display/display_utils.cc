@@ -3,6 +3,7 @@
 #include "board.h"
 #include <cJSON.h>
 #include <esp_log.h>
+#include <lvgl.h>
 
 #define TAG "DisplayUtils"
 
@@ -122,8 +123,13 @@ void display_utils::SetLabelScrollSpeed(lv_obj_t* label, int px_per_sec, int ref
 
     const char* txt = lv_label_get_text(label);
 
-    const lv_font_t* font = lv_obj_get_style_text_font(label, LV_PART_MAIN);
-    int px = lv_txt_get_width(txt, strlen(txt), font, 0);
+    // 计算文本宽度 - 使用 LVGL 的公共 API
+    lv_point_t size_res;
+    lv_text_get_size(&size_res, txt, lv_obj_get_style_text_font(label, LV_PART_MAIN),
+                     lv_obj_get_style_text_letter_space(label, LV_PART_MAIN),
+                     lv_obj_get_style_text_line_space(label, LV_PART_MAIN),
+                     lv_obj_get_width(label), LV_TEXT_FLAG_NONE);
+    int px = size_res.x;
     int label_w = lv_obj_get_width(label);
 
     // 文本长度短于控件宽度时不滚动

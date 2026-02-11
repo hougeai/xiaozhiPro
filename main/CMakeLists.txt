@@ -62,6 +62,8 @@ list(APPEND SOURCES
     "boards/common/sleep_timer.cc"
     "boards/common/sy6970.cc"
     "boards/common/system_reset.cc"
+    "boards/common/alarm.cc"
+    "boards/common/esp32_music.cc"
 )
 list(APPEND INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/boards/common)
 

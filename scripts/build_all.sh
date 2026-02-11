@@ -1,5 +1,5 @@
 #!/bin/bash
-
+# export https_proxy=http://127.0.0.1:8123
 # 检查是否已经安装了 ESP-IDF 环境
 if [ -z "$IDF_PATH" ]; then
     echo "错误: 请先设置 ESP-IDF 环境变量"
