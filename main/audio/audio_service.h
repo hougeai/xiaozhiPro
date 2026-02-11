@@ -23,7 +23,7 @@
 #include "processors/audio_debugger.h"
 #include "wake_word.h"
 #include "protocol.h"
-
+#include "ogg_demuxer.h"
 
 /*
  * There are two types of audio data flow:
@@ -115,6 +115,7 @@ public:
     const std::string& GetLastWakeWord() const;
     bool IsVoiceDetected() const { return voice_detected_; }
     bool IsIdle();
+    void WaitForPlaybackQueueEmpty();
     bool IsWakeWordRunning() const { return xEventGroupGetBits(event_group_) & AS_EVENT_WAKE_WORD_RUNNING; }
     bool IsAudioProcessorRunning() const { return xEventGroupGetBits(event_group_) & AS_EVENT_AUDIO_PROCESSOR_RUNNING; }
     bool IsAfeWakeWord();
@@ -147,6 +148,7 @@ private:
     void* opus_encoder_ = nullptr;
     void* opus_decoder_ = nullptr;
     std::mutex decoder_mutex_;
+    std::mutex input_resampler_mutex_;
     esp_ae_rate_cvt_handle_t input_resampler_ = nullptr;
     esp_ae_rate_cvt_handle_t output_resampler_ = nullptr;
     

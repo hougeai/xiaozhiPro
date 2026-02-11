@@ -48,7 +48,6 @@ protected:
     int idle_counter_ = 0;
 
     void InitializeLcdThemes();
-    void SetupUI();
     virtual bool Lock(int timeout_ms = 0) override;
     virtual void Unlock() override;
     virtual void UpdateStatusBar(bool update_all = false) override;
@@ -65,9 +64,10 @@ protected:
 public:
     ~LcdDisplay();
     virtual void SetEmotion(const char* emotion) override;
-    virtual void SetChatMessage(const char* role, const char* content) override; 
+    virtual void SetChatMessage(const char* role, const char* content) override;
+    virtual void ClearChatMessages() override;
     virtual void SetPreviewImage(std::unique_ptr<LvglImage> image) override;
-
+    virtual void SetupUI() override;
     // Add theme switching function
     virtual void SetTheme(Theme* theme) override;
     

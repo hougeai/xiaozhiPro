@@ -169,6 +169,8 @@ private:
     void HandleNetworkDisconnectedEvent();
     void HandleActivationDoneEvent();
     void HandleWakeWordDetectedEvent();
+    void ContinueOpenAudioChannel(ListeningMode mode);
+    void ContinueWakeWordInvoke(const std::string& wake_word);
 
     // Activation task (runs in background)
     void ActivationTask();
@@ -179,6 +181,7 @@ private:
     void InitializeProtocol();
     void ShowActivationCode(const std::string& code, const std::string& message);
     void SetListeningMode(ListeningMode mode);
+    ListeningMode GetDefaultListeningMode() const;
     
     // 对话记录上传相关
     std::string current_stt_text_;     // 当前轮次的用户输入
