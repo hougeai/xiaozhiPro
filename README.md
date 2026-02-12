@@ -75,6 +75,19 @@ MCP绑定：
 
 ## 更新日志 📅
 
+### 2026.02.12 - v2.2.2.1
+
+> 【小智Pro】固件适配 v2.2.2
+
+- 全面适配小智最新固件版本v2.2.2
+- 固件下载请移步：https://github.com/hougeai/xiaozhiPro/releases
+
+> 【小智Pro】服务端升级
+
+- 接入长期记忆功能
+- 接入视觉理解功能
+- 知识库添加默认模型，无需手动配置
+
 ### 2026.01.15 - v2.1.0.1
 
 > 【小智Pro】固件适配 v2.1.0
@@ -82,7 +95,7 @@ MCP绑定：
 - 音乐播放支持 [唤醒词/唤醒按键] 停止播放
 - 修复 OTA 固件下载失败的问题
 - 全面适配小智最新固件版本v2.1.0
-- 固件下载请移步：<a :href="theme.nav[2].link" target="_blank">{{theme.nav[2].link}}</a>
+- 固件下载请移步：https://github.com/hougeai/xiaozhiPro/releases
 
 ### 2026.01.05
 
