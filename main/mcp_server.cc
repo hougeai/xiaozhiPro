@@ -487,6 +487,74 @@ void McpServer::AddCommonTools() {
             cJSON_Delete(result);
             return result_str;
         });
+    // openclaw
+    AddTool("self.openclaw.send",
+        "当用户要求你给openclaw(欧克劳)发消息时，请调用此工具发送消息内容。"
+        "Args:\n"
+        "  `message`: The message that you should send to openclaw.\n"
+        "Return:\n"
+        "  A JSON object that provides the response from openclaw.",
+        PropertyList({
+            Property("message", kPropertyTypeString)
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
+            http->SetHeader("Content-Type", "application/json");
+            http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
+            http->SetTimeout(10000); // 设置超时时间
+            // 构造请求的JSON数据
+            std::string message = properties["message"].value<std::string>();
+            cJSON* json_data = cJSON_CreateObject();
+            cJSON_AddStringToObject(json_data, "message", message.c_str());
+            char* json_string = cJSON_PrintUnformatted(json_data);
+            std::string data(json_string);
+            cJSON_free(json_string);
+            cJSON_Delete(json_data);
+            http->SetContent(std::move(data));
+            std::string base_url = std::string(CONFIG_SERVER_URL) + "/api/v1/openclaw/send";
+    
+            if (!http->Open("POST", base_url)) {
+                ESP_LOGE(TAG, "Failed to open HTTP connection");
+                return R"({"success":false,"message":"Failed to connect to openclaw"})";
+            }
+            int status_code = http->GetStatusCode();
+            std::string response = http->ReadAll();
+            // ESP_LOGI(TAG, "Mem response: %s", response.c_str());
+            cJSON* root = cJSON_Parse(response.c_str());
+            http->Close();
+            if (status_code != 200) {
+                ESP_LOGE(TAG, "Openclaw request failed with status code: %d", status_code);
+                if (root) {
+                    cJSON* msg = cJSON_GetObjectItem(root, "msg");
+                    std::string error_msg = msg ? msg->valuestring : "Unknown error";
+                    ESP_LOGE(TAG, "Openclaw error message: %s", error_msg.c_str());
+                    cJSON_Delete(root);
+                    return std::string(R"({"success":false,"message":")" + error_msg + R"("})");
+                }
+                return R"({"success":false,"message":"Openclaw request failed"})";
+            }
+            
+            if (!root) {
+                ESP_LOGE(TAG, "Failed to parse Openclaw response");
+                return R"({"success":false,"message":"Failed to parse Openclaw response"})";
+            }
+            cJSON* data_item = cJSON_GetObjectItem(root, "data");
+            if (!data_item || !cJSON_IsString(data_item)) {
+                cJSON_Delete(root);
+                return R"({"success":false,"message":"Empty"})";
+            }
+            std::string data_str = data_item->valuestring;
+            cJSON_Delete(root);
+            // 构造简化后的响应
+            cJSON* result = cJSON_CreateObject();
+            cJSON_AddStringToObject(result, "data", data_str.c_str());
+            cJSON_AddBoolToObject(result, "success", true);
+            char* result_json = cJSON_PrintUnformatted(result);
+            std::string result_str(result_json);
+            cJSON_free(result_json);
+            cJSON_Delete(result);
+            return result_str;
+        });
     // music
     AddTool("self.music.play",
         "当用户要求播放音乐时使用此工具，会自动获取歌曲详情并开始流式播放。\n"
