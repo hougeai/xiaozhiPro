@@ -14,7 +14,6 @@
 #define TAG "OttoEmojiDisplay"
 OttoEmojiDisplay::OttoEmojiDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel, int width, int height, int offset_x, int offset_y, bool mirror_x, bool mirror_y, bool swap_xy)
     : SpiLcdDisplay(panel_io, panel, width, height, offset_x, offset_y, mirror_x, mirror_y, swap_xy) {
-    SetTheme(LvglThemeManager::GetInstance().GetTheme("dark"));
 }
 
 void OttoEmojiDisplay::SetupUI() {
@@ -27,10 +26,13 @@ void OttoEmojiDisplay::SetupUI() {
     // Call parent SetupUI() first to create all lvgl objects
     SpiLcdDisplay::SetupUI();
     
-    // Setup preview image after UI is initialized
-    DisplayLockGuard lock(this);
-    lv_obj_set_size(preview_image_, width_ , height_ );
-    
+    // Setup preview image after UI is initialized - release lock before calling SetEmotion
+    // to avoid deadlock (SetEmotion also acquires DisplayLockGuard internally)
+    {
+        DisplayLockGuard lock(this);
+        lv_obj_set_size(preview_image_, width_ , height_ );
+    }
+
     // Set default emotion after UI is initialized
     SetEmotion("staticstate");
 }
