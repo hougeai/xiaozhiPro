@@ -60,6 +60,20 @@ std::string AlarmManager::ReloadAlarms() {
                 alarm.time = settings_.GetInt("alarm_time_" + std::to_string(i));
                 alarm.repeat = settings_.GetInt("alarm_rpt_" + std::to_string(i));
                 alarm.interval = settings_.GetInt("alarm_itv_" + std::to_string(i));
+                // 检查本地存储的闹钟时间是否已过期，如果是重复闹钟则顺延到未来
+                time_t now = time(NULL);
+                if (alarm.time <= now) {
+                    if (alarm.repeat > 0 && alarm.interval > 0) {
+                        int periods = (now - alarm.time) / alarm.interval + 1;
+                        alarm.time += periods * alarm.interval;
+                        // 更新到NVS
+                        settings_.SetInt("alarm_time_" + std::to_string(i), alarm.time);
+                        ESP_LOGI(TAG, "Alarm %s expired, adjusted to future: %s", alarm.name.c_str(), FormatTimestamp(alarm.time).c_str());
+                    } else {
+                        ESP_LOGI(TAG, "Alarm %s expired and not repeatable, skipping", alarm.name.c_str());
+                        continue;
+                    }
+                }
                 alarms_.push_back(alarm);
                 ESP_LOGI(TAG, "Alarm %d %s add again at %s", alarm.id, alarm.name.c_str(), FormatTimestamp(alarm.time).c_str());
             }
@@ -546,12 +560,31 @@ std::string AlarmManager::SyncAlarmFromCloud() {
         alarm.repeat = repeat_item->valueint;
         alarm.interval = interval_item->valueint;
         alarm.name = std::string(name_item->valuestring);
+        // 检查云端下发的闹钟时间是否已过期，如果是重复闹钟则顺延到未来
+        time_t now = time(NULL);
+        bool time_adjusted = false;
+        if (alarm.time <= now) {
+            if (alarm.repeat > 0 && alarm.interval > 0) {
+                int periods = (now - alarm.time) / alarm.interval + 1;
+                alarm.time += periods * alarm.interval;
+                time_adjusted = true;
+                ESP_LOGI(TAG, "Alarm %s expired, adjusted to future: %s", alarm.name.c_str(), FormatTimestamp(alarm.time).c_str());
+            } else {
+                ESP_LOGI(TAG, "Alarm %s expired and not repeatable, skipping", alarm.name.c_str());
+                continue;
+            }
+        }
         alarms_.push_back(alarm);
         // 保存到本地设置
         settings_.SetString("alarm_" + std::to_string(alarm.id), alarm.name);
         settings_.SetInt("alarm_time_" + std::to_string(alarm.id), alarm.time);
         settings_.SetInt("alarm_rpt_" + std::to_string(alarm.id), alarm.repeat);
         settings_.SetInt("alarm_itv_" + std::to_string(alarm.id), alarm.interval);
+        // 如果时间被调整过，同步到云端
+        if (time_adjusted) {
+            std::string sync_result = SyncAlarmToCloud(alarm, "update");
+            ESP_LOGI(TAG, "Sync adjusted alarm to cloud: %s", sync_result.empty() ? "success" : sync_result.c_str());
+        }
         ESP_LOGI(TAG, "Loaded alarm from cloud: %s %s", alarm.name.c_str(), FormatTimestamp(alarm.time).c_str());
     }
     cJSON_Delete(root);
