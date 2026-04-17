@@ -123,18 +123,30 @@ std::string Esp32Music::SinglePlay(const std::string& song_name, const std::stri
         if (response_json) {
             // 首先检查响应是否包含data字段
             cJSON* data_obj = cJSON_GetObjectItem(response_json, "data");
+            // 检查data对象是否存在
+            if (!data_obj) {
+                ESP_LOGE(TAG, "Invalid response: missing data field");
+                cJSON_Delete(response_json);
+                return "音乐服务器返回数据无效";
+            }
             // 提取关键信息
             cJSON* song_id = cJSON_GetObjectItem(data_obj, "song_id"); 
             cJSON* singer = cJSON_GetObjectItem(data_obj, "singer");
             cJSON* song = cJSON_GetObjectItem(data_obj, "song");
             cJSON* audio_url = cJSON_GetObjectItem(data_obj, "audio_url");
             cJSON* lyric_url = cJSON_GetObjectItem(data_obj, "lyric_url");
-            ESP_LOGI(TAG, "Singer: %s Song: %s song_id: %d", singer->valuestring, song->valuestring, song_id->valueint);
+            // 安全打印日志
+            if (singer && song && song_id) {
+                ESP_LOGI(TAG, "Singer: %s Song: %s song_id: %d", 
+                    singer->valuestring ? singer->valuestring : "unknown",
+                    song->valuestring ? song->valuestring : "unknown",
+                    song_id->valueint);
+            }
             
             // 检查audio_url是否有效
             if (cJSON_IsString(audio_url) && audio_url->valuestring && strlen(audio_url->valuestring) > 0) {
                 current_music_url_ = audio_url->valuestring;
-                current_song_id_ = song_id->valueint; 
+                current_song_id_ = song_id ? song_id->valueint : 0; 
                 song_name_displayed_ = false;  // 重置歌名显示标志
                 if (!StartStreaming(current_music_url_)) {
                     ESP_LOGE(TAG, "Failed to start streaming playback");

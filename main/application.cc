@@ -340,9 +340,14 @@ void Application::HandleActivationDoneEvent() {
         ESP_LOGI(TAG, "Server time not synchronized, alarm manager disabled");
         alarm_m_ = nullptr;
     }
-    // 添加 music 实例
-    music_ = new Esp32Music();
-    ESP_LOGI(TAG, "Music player initialized");
+    // 添加 music 实例 (ESP32C3 内存不足，不初始化音乐播放器)
+    if (SystemInfo::GetChipModelName() == "esp32c3") {
+        ESP_LOGI(TAG, "ESP32C3 has insufficient memory, music player disabled");
+        music_ = nullptr;
+    } else {
+        music_ = new Esp32Music();
+        ESP_LOGI(TAG, "Music player initialized");
+    }
     Schedule([this]() {
         // Play the success sound to indicate the device is ready
         audio_service_.PlaySound(Lang::Sounds::OGG_SUCCESS);

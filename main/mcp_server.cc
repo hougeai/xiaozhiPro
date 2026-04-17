@@ -572,6 +572,10 @@ void McpServer::AddCommonTools() {
             Property("singer", kPropertyTypeString, "")
         }),
         [](const PropertyList& properties) -> ReturnValue {
+            // ESP32C3 内存不足，不支持音乐播放
+            if (SystemInfo::GetChipModelName() == "esp32c3") {
+                return R"({"success":true,"message":"ESP32C3由于内存不足不支持音乐播放"})";
+            }
             auto& app = Application::GetInstance();
             if(app.music_ == nullptr){
                 ESP_LOGE(TAG, "MusicManager is nullptr");
@@ -584,7 +588,7 @@ void McpServer::AddCommonTools() {
             if (result.empty()) {
                 return R"({"success":true,"message":"音乐开始播放"})";
             } else {
-                return std::string(R"({"success":false,"message":")" + result + R"("})");
+                return std::string(R"({"success":true,"message":")" + result + R"("})");
             }
         });
     AddTool("self.music.playlist.loop",
@@ -601,6 +605,10 @@ void McpServer::AddCommonTools() {
             Property("mode", kPropertyTypeString),
         }),
         [](const PropertyList& properties) -> ReturnValue {
+            // ESP32C3 内存不足，不支持音乐播放
+            if (SystemInfo::GetChipModelName() == "esp32c3") {
+                return R"({"success":true,"message":"ESP32C3由于内存不足不支持音乐播放"})";
+            }
             auto& app = Application::GetInstance();
             if(app.music_ == nullptr){
                 ESP_LOGE(TAG, "MusicManager is nullptr");
@@ -623,6 +631,10 @@ void McpServer::AddCommonTools() {
         "3. '重新加载歌单'",
         PropertyList(),
         [](const PropertyList& properties) -> ReturnValue {
+            // ESP32C3 内存不足，不支持音乐播放
+            if (SystemInfo::GetChipModelName() == "esp32c3") {
+                return R"({"success":true,"message":"ESP32C3由于内存不足不支持音乐播放"})";
+            }
             auto& app = Application::GetInstance();
             if(app.music_ == nullptr){
                 ESP_LOGE(TAG, "MusicManager is nullptr");
@@ -640,6 +652,10 @@ void McpServer::AddCommonTools() {
         "3. '播放下一首'",
         PropertyList(),
         [](const PropertyList& properties) -> ReturnValue {
+            // ESP32C3 内存不足，不支持音乐播放
+            if (SystemInfo::GetChipModelName() == "esp32c3") {
+                return R"({"success":true,"message":"ESP32C3由于内存不足不支持音乐播放"})";
+            }
             auto& app = Application::GetInstance();
             if(app.music_ == nullptr){
                 ESP_LOGE(TAG, "MusicManager is nullptr");
@@ -682,28 +698,28 @@ void McpServer::AddCommonTools() {
     
             if (!http->Open("POST", base_url)) {
                 ESP_LOGE(TAG, "Failed to open HTTP connection");
-                return R"({"success":false,"message":"Failed to connect to knowledge base"})";
+                return R"({"success":false,"message":"Failed to connect to weather server"})";
             }
             int status_code = http->GetStatusCode();
             std::string response = http->ReadAll();
-            ESP_LOGI(TAG, "Mem response: %s", response.c_str());
+            ESP_LOGI(TAG, "weather response: %s", response.c_str());
             cJSON* root = cJSON_Parse(response.c_str());
             http->Close();
             if (status_code != 200) {
-                ESP_LOGE(TAG, "Knowledge base request failed with status code: %d", status_code);
+                ESP_LOGE(TAG, "weather request failed with status code: %d", status_code);
                 if (root) {
                     cJSON* msg = cJSON_GetObjectItem(root, "msg");
                     std::string error_msg = msg ? msg->valuestring : "Unknown error";
-                    ESP_LOGE(TAG, "Knowledge base error message: %s", error_msg.c_str());
+                    ESP_LOGE(TAG, "weather error message: %s", error_msg.c_str());
                     cJSON_Delete(root);
                     return std::string(R"({"success":false,"message":")" + error_msg + R"("})");
                 }
-                return R"({"success":false,"message":"Knowledge base request failed"})";
+                return R"({"success":false,"message":"weather request failed"})";
             }
             
             if (!root) {
-                ESP_LOGE(TAG, "Failed to parse knowledge base response");
-                return R"({"success":false,"message":"Failed to parse knowledge base response"})";
+                ESP_LOGE(TAG, "Failed to parse weather response");
+                return R"({"success":false,"message":"Failed to parse weather response"})";
             }
             cJSON* data_obj = cJSON_GetObjectItem(root, "data"); 
             // 直接将data内容转换为字符串返回
