@@ -1,10 +1,8 @@
 #!/bin/bash
-# export https_proxy=http://127.0.0.1:8123
+export https_proxy=http://127.0.0.1:8123
 # 检查是否已经安装了 ESP-IDF 环境
 if [ -z "$IDF_PATH" ]; then
-    echo "错误: 请先设置 ESP-IDF 环境变量"
-    echo "例如: export IDF_PATH=/path/to/esp-idf"
-    exit 1
+    source ~/esp/v5.5.2/esp-idf/export.sh
 fi
 
 # 设置日志文件
