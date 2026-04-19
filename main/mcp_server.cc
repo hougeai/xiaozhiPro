@@ -511,7 +511,7 @@ void McpServer::AddCommonTools() {
             cJSON_free(json_string);
             cJSON_Delete(json_data);
             http->SetContent(std::move(data));
-            std::string base_url = std::string(CONFIG_SERVER_URL) + "/api/v1/openclaw/send";
+            std::string base_url = std::string(CONFIG_SERVER_URL) + "/openclaw_send";
     
             if (!http->Open("POST", base_url)) {
                 ESP_LOGE(TAG, "Failed to open HTTP connection");
@@ -554,6 +554,77 @@ void McpServer::AddCommonTools() {
             cJSON_free(result_json);
             cJSON_Delete(result);
             return result_str;
+        });
+    AddTool("self.openclaw.retrieve",
+        "当收到'欧克劳报告'时，请调用此工具检索openclaw(欧克劳)最新消息",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
+            http->SetHeader("Content-Type", "application/json");
+            http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
+            http->SetTimeout(10000); // 设置超时时间
+            std::string base_url = std::string(CONFIG_SERVER_URL) + "/openclaw_retrieve";
+    
+            if (!http->Open("GET", base_url)) {
+                ESP_LOGE(TAG, "Failed to open HTTP connection");
+                return R"({"success":false,"message":"Failed to connect to openclaw"})";
+            }
+            int status_code = http->GetStatusCode();
+            std::string response = http->ReadAll();
+            // ESP_LOGI(TAG, "Mem response: %s", response.c_str());
+            cJSON* root = cJSON_Parse(response.c_str());
+            http->Close();
+            if (status_code != 200) {
+                ESP_LOGE(TAG, "Openclaw request failed with status code: %d", status_code);
+                if (root) {
+                    cJSON* msg = cJSON_GetObjectItem(root, "msg");
+                    std::string error_msg = msg ? msg->valuestring : "Unknown error";
+                    ESP_LOGE(TAG, "Openclaw error message: %s", error_msg.c_str());
+                    cJSON_Delete(root);
+                    return std::string(R"({"success":false,"message":")" + error_msg + R"("})");
+                }
+                return R"({"success":false,"message":"Openclaw request failed"})";
+            }
+            
+            if (!root) {
+                ESP_LOGE(TAG, "Failed to parse Openclaw response");
+                return R"({"success":false,"message":"Failed to parse Openclaw response"})";
+            }
+            cJSON* data_item = cJSON_GetObjectItem(root, "data");
+            if (!data_item || !cJSON_IsString(data_item)) {
+                cJSON_Delete(root);
+                return R"({"success":false,"message":"Empty"})";
+            }
+            std::string data_str = data_item->valuestring;
+            cJSON_Delete(root);
+            // 构造简化后的响应
+            cJSON* result = cJSON_CreateObject();
+            cJSON_AddStringToObject(result, "data", data_str.c_str());
+            cJSON_AddBoolToObject(result, "success", true);
+            char* result_json = cJSON_PrintUnformatted(result);
+            std::string result_str(result_json);
+            cJSON_free(result_json);
+            cJSON_Delete(result);
+            return result_str;
+        });    
+    AddTool("self.get_device_state",
+        "获取设备对话状态，返回状态字符串（如 idle、listening、speaking 等）",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto& app = Application::GetInstance();
+            auto state = app.GetDeviceState();
+            static const char* const STATE_STRINGS[] = {
+                "unknown", "starting", "wifi_configuring", "idle", "connecting",
+                "listening", "speaking", "upgrading", "activating", "audio_testing",
+                "alarm", "fatal_error"
+            };
+            const char* state_name = "unknown";
+            if (state >= 0 && state <= kDeviceStateFatalError) {
+                state_name = STATE_STRINGS[state];
+            }
+            cJSON* result = cJSON_CreateObject();
+            cJSON_AddStringToObject(result, "state", state_name);
+            return result;
         });
     // music
     AddTool("self.music.play",
