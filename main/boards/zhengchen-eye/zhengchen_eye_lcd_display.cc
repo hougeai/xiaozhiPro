@@ -1,5 +1,5 @@
 #include "zhengchen_eye_lcd_display.h"
-#include <libs/gif/lv_gif.h>
+#include "gif/lvgl_gif.h"
 #include "lvgl_theme.h"
 #include "assets/lang_config.h"
 #include "application.h"
@@ -27,20 +27,25 @@ extern const lv_img_dsc_t thinking;
 
 void ZhengchenEyeLcdDisplay::SetupUI() {
     ESP_LOGI(TAG, "Starting UI setup");
+
+    // 先调用基类 SetupUI 初始化标准 UI 组件（status_label_, idle_labels_ 等）
+    LcdDisplay::SetupUI();
+
     DisplayLockGuard lock(this);
-    /* overlay */
+
+    /* overlay - 全屏黑色覆盖层用于显示 GIF 表情 */
     overlay_container = lv_obj_create(lv_screen_active());
-    lv_obj_remove_style_all(overlay_container);  
-    lv_obj_set_size(overlay_container, LV_HOR_RES, LV_VER_RES);  
-    lv_obj_set_style_bg_color(overlay_container, lv_color_black(), 0);  
+    lv_obj_remove_style_all(overlay_container);
+    lv_obj_set_size(overlay_container, LV_HOR_RES, LV_VER_RES);
+    lv_obj_set_style_bg_color(overlay_container, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(overlay_container, LV_OPA_COVER, 0);
     lv_obj_align(overlay_container, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_add_flag(overlay_container, LV_OBJ_FLAG_HIDDEN); // 默认隐藏   
-    
+    lv_obj_add_flag(overlay_container, LV_OBJ_FLAG_HIDDEN); // 默认隐藏
+
     gif_label_ = lv_gif_create(overlay_container);
     lv_gif_set_src(gif_label_, &happy);
     lv_obj_set_size(gif_label_, LV_HOR_RES, LV_VER_RES);
-    lv_obj_align(gif_label_, LV_ALIGN_CENTER, 0, 0); 
+    lv_obj_align(gif_label_, LV_ALIGN_CENTER, 0, 0);
     ESP_LOGI(TAG, "UI setup completed. overlay_container: %p, gif_label_: %p", overlay_container, gif_label_);
 }
 
@@ -48,7 +53,8 @@ void ZhengchenEyeLcdDisplay::SetEmotion(const char* emotion) {
     // idle状态且 neutral 情绪 - 隐藏表情覆盖层，显示正常界面
     auto& app = Application::GetInstance();
     if (strcmp(emotion, "neutral") == 0 && app.GetDeviceState() == kDeviceStateIdle) {
-        ESP_LOGI(TAG, "Neutral emotion detected, hiding emotion overlay and showing normal UI");    
+        ESP_LOGI(TAG, "Neutral emotion detected, hiding emotion overlay and showing normal UI");
+        DisplayLockGuard lock(this);
         // 隐藏 overlay_container
         if (overlay_container != nullptr) {
             lv_obj_add_flag(overlay_container, LV_OBJ_FLAG_HIDDEN);
@@ -99,13 +105,11 @@ void ZhengchenEyeLcdDisplay::SetEmotion(const char* emotion) {
 
     DisplayLockGuard lock(this);
 
-    
-
     if (gif_label_ == nullptr) {
         ESP_LOGI(TAG, "GIF label is null, cannot set emotion: %s", emotion);
-        return;
+        return;  // 锁在作用域结束时自动释放
     }
-    
+
     if (it != emotions.end()) {
         lv_gif_set_src(gif_label_, it->gif);
         ESP_LOGI(TAG, "Setting emotion: %s with GIF", emotion);
@@ -116,7 +120,7 @@ void ZhengchenEyeLcdDisplay::SetEmotion(const char* emotion) {
     // 显示 overlay_container 并隐藏其他元素
     lv_obj_clear_flag(overlay_container, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(overlay_container);
-    
+
     // 隐藏内容区域和其他元素
     if (content_ != nullptr) {
         lv_obj_add_flag(content_, LV_OBJ_FLAG_HIDDEN);
@@ -143,6 +147,7 @@ void ZhengchenEyeLcdDisplay::UpdateStatusBar(bool update_all) {
     auto& app = Application::GetInstance();
     auto& board = Board::GetInstance();
     auto codec = board.GetAudioCodec();
+
     // 设备空闲状态时显示待机信息
     if (app.GetDeviceState() == kDeviceStateIdle && !app.music_playing_) {
         if (update_all || idle_counter_++ % refresh_interval_ == 0) {
@@ -154,10 +159,6 @@ void ZhengchenEyeLcdDisplay::UpdateStatusBar(bool update_all) {
         current_idle_page_ = 0;
         idle_counter_ = 0;
     }
-    // 获取图标字体
-    LvglTheme* lvgl_theme = static_cast<LvglTheme*>(current_theme_);
-    auto text_font = lvgl_theme->text_font()->font();
-    auto icon_font = lvgl_theme->icon_font()->font();
 
     static int display_mode = 0;  // 0-时间, 1-网络, 2-电池, 3-音量/静音
     static unsigned long last_switch_time = 0;
@@ -167,6 +168,18 @@ void ZhengchenEyeLcdDisplay::UpdateStatusBar(bool update_all) {
     // 定时切换显示内容
     if (current_time - last_switch_time > 5000 || !initialized) {
         DisplayLockGuard lock(this);
+
+        // 安全检查：确保主题和状态栏已初始化
+        if (current_theme_ == nullptr || status_label_ == nullptr) {
+            ESP_LOGW(TAG, "Theme or status_label not initialized yet, skipping UpdateStatusBar");
+            return;
+        }
+
+        // 获取图标字体（在锁内获取，确保线程安全）
+        LvglTheme* lvgl_theme = static_cast<LvglTheme*>(current_theme_);
+        auto text_font = lvgl_theme->text_font()->font();
+        auto icon_font = lvgl_theme->icon_font()->font();
+
         switch (display_mode) {
             case 0: // 显示时间
             {
