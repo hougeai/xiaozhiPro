@@ -106,6 +106,14 @@
 ![小智Pro个人版反馈](qrcode.webp)
 
 ## 更新日志 📅
+## 2026.06.08
+
+> 【小智Pro】服务端升级（设备端固件要求：v2.2.5.1 以上）
+
+- 新增 OpenClaw 插件版（龙虾插件版），支持 WebSocket 实时双向通信
+  - 无需公网 IP，安装 `@xiaozhi-pro/openclaw-plugin` 插件即可自动连接
+  - 消息实时推送，支持 OpenClaw 主动推送、指定设备投递、所有设备广播
+  - 详见 [控制OpenClaw - 插件版](https://mkwyqeoebedx.sealosbja.site/docs/cn/user/openclaw-server.html)
 
 ## 2026.04.19 - v2.2.5.1
 
