@@ -606,7 +606,127 @@ void McpServer::AddCommonTools() {
             cJSON_free(result_json);
             cJSON_Delete(result);
             return result_str;
-        });    
+        });
+    // hermes
+    AddTool("self.hermes.send",
+        "当用户要求你给hermes(爱马仕)发消息时，请调用此工具发送消息内容。"
+        "Args:\n"
+        "  `message`: The message that you should send to hermes.\n"
+        "Return:\n"
+        "  A JSON object that provides the response from hermes.",
+        PropertyList({
+            Property("message", kPropertyTypeString)
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
+            http->SetHeader("Content-Type", "application/json");
+            http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
+            http->SetTimeout(10000); // 设置超时时间
+            // 构造请求的JSON数据
+            std::string message = properties["message"].value<std::string>();
+            cJSON* json_data = cJSON_CreateObject();
+            cJSON_AddStringToObject(json_data, "message", message.c_str());
+            char* json_string = cJSON_PrintUnformatted(json_data);
+            std::string data(json_string);
+            cJSON_free(json_string);
+            cJSON_Delete(json_data);
+            http->SetContent(std::move(data));
+            std::string base_url = std::string(CONFIG_SERVER_URL) + "/hermes_send";
+    
+            if (!http->Open("POST", base_url)) {
+                ESP_LOGE(TAG, "Failed to open HTTP connection");
+                return R"({"success":false,"message":"Failed to connect to hermes"})";
+            }
+            int status_code = http->GetStatusCode();
+            std::string response = http->ReadAll();
+            // ESP_LOGI(TAG, "Mem response: %s", response.c_str());
+            cJSON* root = cJSON_Parse(response.c_str());
+            http->Close();
+            if (status_code != 200) {
+                ESP_LOGE(TAG, "hermes request failed with status code: %d", status_code);
+                if (root) {
+                    cJSON* msg = cJSON_GetObjectItem(root, "msg");
+                    std::string error_msg = msg ? msg->valuestring : "Unknown error";
+                    ESP_LOGE(TAG, "hermes error message: %s", error_msg.c_str());
+                    cJSON_Delete(root);
+                    return std::string(R"({"success":false,"message":")" + error_msg + R"("})");
+                }
+                return R"({"success":false,"message":"hermes request failed"})";
+            }
+            
+            if (!root) {
+                ESP_LOGE(TAG, "Failed to parse hermes response");
+                return R"({"success":false,"message":"Failed to parse hermes response"})";
+            }
+            cJSON* data_item = cJSON_GetObjectItem(root, "data");
+            if (!data_item || !cJSON_IsString(data_item)) {
+                cJSON_Delete(root);
+                return R"({"success":false,"message":"Empty"})";
+            }
+            std::string data_str = data_item->valuestring;
+            cJSON_Delete(root);
+            // 构造简化后的响应
+            cJSON* result = cJSON_CreateObject();
+            cJSON_AddStringToObject(result, "data", data_str.c_str());
+            cJSON_AddBoolToObject(result, "success", true);
+            char* result_json = cJSON_PrintUnformatted(result);
+            std::string result_str(result_json);
+            cJSON_free(result_json);
+            cJSON_Delete(result);
+            return result_str;
+        });
+    AddTool("self.hermes.retrieve",
+        "当收到'Hermes报告'时，请调用此工具检索hermes(爱马仕)最新消息",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
+            http->SetHeader("Content-Type", "application/json");
+            http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
+            http->SetTimeout(10000); // 设置超时时间
+            std::string base_url = std::string(CONFIG_SERVER_URL) + "/hermes_retrieve";
+    
+            if (!http->Open("GET", base_url)) {
+                ESP_LOGE(TAG, "Failed to open HTTP connection");
+                return R"({"success":false,"message":"Failed to connect to hermes"})";
+            }
+            int status_code = http->GetStatusCode();
+            std::string response = http->ReadAll();
+            // ESP_LOGI(TAG, "Mem response: %s", response.c_str());
+            cJSON* root = cJSON_Parse(response.c_str());
+            http->Close();
+            if (status_code != 200) {
+                ESP_LOGE(TAG, "hermes request failed with status code: %d", status_code);
+                if (root) {
+                    cJSON* msg = cJSON_GetObjectItem(root, "msg");
+                    std::string error_msg = msg ? msg->valuestring : "Unknown error";
+                    ESP_LOGE(TAG, "hermes error message: %s", error_msg.c_str());
+                    cJSON_Delete(root);
+                    return std::string(R"({"success":false,"message":")" + error_msg + R"("})");
+                }
+                return R"({"success":false,"message":"hermes request failed"})";
+            }
+            
+            if (!root) {
+                ESP_LOGE(TAG, "Failed to parse hermes response");
+                return R"({"success":false,"message":"Failed to parse hermes response"})";
+            }
+            cJSON* data_item = cJSON_GetObjectItem(root, "data");
+            if (!data_item || !cJSON_IsString(data_item)) {
+                cJSON_Delete(root);
+                return R"({"success":false,"message":"Empty"})";
+            }
+            std::string data_str = data_item->valuestring;
+            cJSON_Delete(root);
+            // 构造简化后的响应
+            cJSON* result = cJSON_CreateObject();
+            cJSON_AddStringToObject(result, "data", data_str.c_str());
+            cJSON_AddBoolToObject(result, "success", true);
+            char* result_json = cJSON_PrintUnformatted(result);
+            std::string result_str(result_json);
+            cJSON_free(result_json);
+            cJSON_Delete(result);
+            return result_str;
+        });
     AddTool("self.get_device_state",
         "获取设备对话状态，返回状态字符串（如 idle、listening、speaking 等）",
         PropertyList(),
