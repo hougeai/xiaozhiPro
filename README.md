@@ -106,7 +106,21 @@
 ![小智Pro个人版反馈](qrcode.webp)
 
 ## 更新日志 📅
-## 2026.06.08
+
+### 2026.06.10
+> 【小智Pro】固件适配 v2.2.6
+
+- 适配小智最新固件版本v2.2.6，支持所有官方仓库开发板型号
+  - 固件下载请移步：<a :href="theme.nav[2].link" target="_blank">{{theme.nav[2].link}}</a>
+
+> 【小智Pro】服务端升级（设备端固件要求：v2.2.6.1 以上）
+  
+- 新增 Hermes 控制功能，支持和您的 Hermes 通过 WebSocket 实时双向通信
+  - 无需公网 IP，安装插件即可自动连接
+  - 消息实时推送，支持 Hermes 主动推送、指定设备投递、所有设备广播
+  - 详见 [控制Hermes - 插件版](/cn/user/hermes-server)
+
+### 2026.06.08
 
 > 【小智Pro】服务端升级（设备端固件要求：v2.2.5.1 以上）
 
@@ -115,7 +129,7 @@
   - 消息实时推送，支持 OpenClaw 主动推送、指定设备投递、所有设备广播
   - 详见 [控制OpenClaw - 插件版](https://mkwyqeoebedx.sealosbja.site/docs/cn/user/openclaw-server.html)
 
-## 2026.04.19 - v2.2.5.1
+### 2026.04.19 - v2.2.5.1
 
 > 【小智Pro】固件适配 v2.2.5
 
