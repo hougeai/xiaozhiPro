@@ -118,7 +118,7 @@
 - 新增 Hermes 控制功能，支持和您的 Hermes 通过 WebSocket 实时双向通信
   - 无需公网 IP，安装插件即可自动连接
   - 消息实时推送，支持 Hermes 主动推送、指定设备投递、所有设备广播
-  - 详见 [控制Hermes - 插件版](/cn/user/hermes-server)
+  - 详见 [控制Hermes - 插件版](https://mkwyqeoebedx.sealosbja.site/docs/cn/user/hermes-server)
 
 ### 2026.06.08
 
