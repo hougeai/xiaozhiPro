@@ -727,6 +727,196 @@ void McpServer::AddCommonTools() {
             cJSON_Delete(result);
             return result_str;
         });
+    // Home Assistant
+    AddTool("self.ha.sensors",
+        "当用户询问 Home Assistant (HA) 智能家居传感器数据（如温度、湿度、滤芯寿命、网络速度等）时，调用此工具获取所有传感器列表。"
+        "返回按设备分组的传感器数据，每个传感器包含 entity_id、name、state、unit 字段。",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
+            http->SetHeader("Content-Type", "application/json");
+            http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
+            http->SetTimeout(10000);
+            std::string base_url = std::string(CONFIG_SERVER_URL) + "/ha_sensors";
+
+            if (!http->Open("GET", base_url)) {
+                ESP_LOGE(TAG, "Failed to open HTTP connection");
+                return R"({"success":false,"message":"Failed to connect to HA"})";
+            }
+            int status_code = http->GetStatusCode();
+            std::string response = http->ReadAll();
+            cJSON* root = cJSON_Parse(response.c_str());
+            http->Close();
+            if (status_code != 200) {
+                ESP_LOGE(TAG, "HA sensors request failed with status code: %d", status_code);
+                if (root) {
+                    cJSON* msg = cJSON_GetObjectItem(root, "msg");
+                    std::string error_msg = msg ? msg->valuestring : "Unknown error";
+                    cJSON_Delete(root);
+                    return std::string(R"({"success":false,"message":")" + error_msg + R"("})");
+                }
+                return R"({"success":false,"message":"HA sensors request failed"})";
+            }
+            if (!root) {
+                ESP_LOGE(TAG, "Failed to parse HA sensors response");
+                return R"({"success":false,"message":"Failed to parse HA response"})";
+            }
+            cJSON* data_item = cJSON_GetObjectItem(root, "data");
+            if (!data_item) {
+                cJSON_Delete(root);
+                return R"({"success":false,"message":"Empty"})";
+            }
+            char* data_json = cJSON_PrintUnformatted(data_item);
+            std::string data_str(data_json);
+            cJSON_free(data_json);
+            cJSON_Delete(root);
+            cJSON* result = cJSON_CreateObject();
+            cJSON_AddBoolToObject(result, "success", true);
+            cJSON_AddStringToObject(result, "data", data_str.c_str());
+            char* result_json = cJSON_PrintUnformatted(result);
+            std::string result_str(result_json);
+            cJSON_free(result_json);
+            cJSON_Delete(result);
+            return result_str;
+        });
+    AddTool("self.ha.controls",
+        "当用户想要控制 Home Assistant (HA) 智能家居设备（如开灯、关灯、打开摄像头移动检测等）时，先调用此工具获取可控制设备列表。"
+        "返回按设备分组的可控制设备，每个设备包含 entity_id、name、state、domain、services 字段。"
+        "你需要从中找到用户想控制的设备对应的 entity_id 和可用的 service，然后调用 self.ha.control 工具执行控制。",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
+            http->SetHeader("Content-Type", "application/json");
+            http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
+            http->SetTimeout(10000);
+            std::string base_url = std::string(CONFIG_SERVER_URL) + "/ha_controls";
+
+            if (!http->Open("GET", base_url)) {
+                ESP_LOGE(TAG, "Failed to open HTTP connection");
+                return R"({"success":false,"message":"Failed to connect to HA"})";
+            }
+            int status_code = http->GetStatusCode();
+            std::string response = http->ReadAll();
+            cJSON* root = cJSON_Parse(response.c_str());
+            http->Close();
+            if (status_code != 200) {
+                ESP_LOGE(TAG, "HA controls request failed with status code: %d", status_code);
+                if (root) {
+                    cJSON* msg = cJSON_GetObjectItem(root, "msg");
+                    std::string error_msg = msg ? msg->valuestring : "Unknown error";
+                    cJSON_Delete(root);
+                    return std::string(R"({"success":false,"message":")" + error_msg + R"("})");
+                }
+                return R"({"success":false,"message":"HA controls request failed"})";
+            }
+            if (!root) {
+                ESP_LOGE(TAG, "Failed to parse HA controls response");
+                return R"({"success":false,"message":"Failed to parse HA response"})";
+            }
+            cJSON* data_item = cJSON_GetObjectItem(root, "data");
+            if (!data_item) {
+                cJSON_Delete(root);
+                return R"({"success":false,"message":"Empty"})";
+            }
+            char* data_json = cJSON_PrintUnformatted(data_item);
+            std::string data_str(data_json);
+            cJSON_free(data_json);
+            cJSON_Delete(root);
+            cJSON* result = cJSON_CreateObject();
+            cJSON_AddBoolToObject(result, "success", true);
+            cJSON_AddStringToObject(result, "data", data_str.c_str());
+            char* result_json = cJSON_PrintUnformatted(result);
+            std::string result_str(result_json);
+            cJSON_free(result_json);
+            cJSON_Delete(result);
+            return result_str;
+        });
+    AddTool("self.ha.control",
+        "控制 Home Assistant (HA) 智能家居设备。调用前请先用 self.ha.controls 工具获取可用的 entity_id 和 service。"
+        "Args:\n"
+        "  `entity_id`: 设备实体ID，如 light.xxx、switch.xxx、camera.xxx\n"
+        "  `service`: 服务名称，如 turn_on、turn_off、toggle、snapshot\n"
+        "  `fields`: 额外参数（JSON字符串，无额外参数时传空对象 {}）\n"
+        "Return:\n"
+        "  A JSON object with entity_id, state and success.",
+        PropertyList({
+            Property("entity_id", kPropertyTypeString),
+            Property("service", kPropertyTypeString),
+            Property("fields", kPropertyTypeString, "{}")
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
+            http->SetHeader("Content-Type", "application/json");
+            http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
+            http->SetTimeout(10000);
+            // 构造请求JSON
+            std::string entity_id = properties["entity_id"].value<std::string>();
+            std::string service = properties["service"].value<std::string>();
+            std::string fields_str = properties["fields"].value<std::string>();
+            cJSON* json_data = cJSON_CreateObject();
+            cJSON_AddStringToObject(json_data, "entity_id", entity_id.c_str());
+            cJSON_AddStringToObject(json_data, "service", service.c_str());
+            // 解析 fields 字符串为 JSON 对象，解析失败则用空对象
+            cJSON* fields_json = cJSON_Parse(fields_str.c_str());
+            if (fields_json && cJSON_IsObject(fields_json)) {
+                cJSON_AddItemReferenceToObject(json_data, "fields", fields_json);
+                char* json_string = cJSON_PrintUnformatted(json_data);
+                std::string data(json_string);
+                cJSON_free(json_string);
+                cJSON_Delete(json_data);
+                cJSON_Delete(fields_json);
+                http->SetContent(std::move(data));
+            } else {
+                cJSON_AddNullToObject(json_data, "fields");
+                char* json_string = cJSON_PrintUnformatted(json_data);
+                std::string data(json_string);
+                cJSON_free(json_string);
+                cJSON_Delete(json_data);
+                if (fields_json) cJSON_Delete(fields_json);
+                http->SetContent(std::move(data));
+            }
+            std::string base_url = std::string(CONFIG_SERVER_URL) + "/ha_control";
+
+            if (!http->Open("POST", base_url)) {
+                ESP_LOGE(TAG, "Failed to open HTTP connection");
+                return R"({"success":false,"message":"Failed to connect to HA"})";
+            }
+            int status_code = http->GetStatusCode();
+            std::string response = http->ReadAll();
+            cJSON* root = cJSON_Parse(response.c_str());
+            http->Close();
+            if (status_code != 200) {
+                ESP_LOGE(TAG, "HA control request failed with status code: %d", status_code);
+                if (root) {
+                    cJSON* msg = cJSON_GetObjectItem(root, "msg");
+                    std::string error_msg = msg ? msg->valuestring : "Unknown error";
+                    cJSON_Delete(root);
+                    return std::string(R"({"success":false,"message":")" + error_msg + R"("})");
+                }
+                return R"({"success":false,"message":"HA control request failed"})";
+            }
+            if (!root) {
+                ESP_LOGE(TAG, "Failed to parse HA control response");
+                return R"({"success":false,"message":"Failed to parse HA response"})";
+            }
+            cJSON* data_item = cJSON_GetObjectItem(root, "data");
+            if (!data_item) {
+                cJSON_Delete(root);
+                return R"({"success":false,"message":"Empty"})";
+            }
+            char* data_json = cJSON_PrintUnformatted(data_item);
+            std::string data_str(data_json);
+            cJSON_free(data_json);
+            cJSON_Delete(root);
+            cJSON* result = cJSON_CreateObject();
+            cJSON_AddBoolToObject(result, "success", true);
+            cJSON_AddStringToObject(result, "data", data_str.c_str());
+            char* result_json = cJSON_PrintUnformatted(result);
+            std::string result_str(result_json);
+            cJSON_free(result_json);
+            cJSON_Delete(result);
+            return result_str;
+        });
     AddTool("self.get_device_state",
         "获取设备对话状态，返回状态字符串（如 idle、listening、speaking 等）",
         PropertyList(),
