@@ -115,13 +115,13 @@
   - 通过 HA 的 REST API 连接你自建的 HA 实例，自动探测全屋可控制设备与传感器
   - 支持在控制台手动调试每个实体服务调用
   - 语音指挥小智控制全屋智能设备
-  - 详见 [控制HomeAssistant](/cn/user/home-assistant)
+  - 详见 [控制HomeAssistant](https://mkwyqeoebedx.sealosbja.site/docs/cn/user/home-assistant)
 
 ### 2026.06.10
 > 【小智Pro】固件适配 v2.2.6
 
 - 适配小智最新固件版本v2.2.6，支持所有官方仓库开发板型号
-  - 固件下载请移步：<a :href="theme.nav[2].link" target="_blank">{{theme.nav[2].link}}</a>
+  - 固件下载请移步：https://github.com/hougeai/xiaozhiPro/releases
 
 > 【小智Pro】服务端升级（设备端固件要求：v2.2.6.1 以上）
   
@@ -144,7 +144,7 @@
 > 【小智Pro】固件适配 v2.2.5
 
 - 适配小智最新固件版本v2.2.5，支持所有官方仓库开发板型号
-  - 固件下载请移步：<a :href="theme.nav[2].link" target="_blank">{{theme.nav[2].link}}</a>
+  - 固件下载请移步：https://github.com/hougeai/xiaozhiPro/releases
 - 修复音乐播放导致设备重启的bug
 - 修复闹钟提醒时间同步的bug
 - 修复zhengchen-eye双屏显示的bug
