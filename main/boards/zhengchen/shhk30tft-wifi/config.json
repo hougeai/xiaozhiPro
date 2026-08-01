@@ -1,0 +1,13 @@
+{
+    "manufacturer": "zhengchen",
+    "type": "zhengchen-shhk30tft-wifi",
+    "target": "esp32s3",
+    "builds": [
+        {
+            "name": "zhengchen-shhk30tft-wifi",
+            "sdkconfig_append": [
+                "CONFIG_USE_AFE_WAKE_WORD=y"
+            ]
+        }
+    ]
+}
