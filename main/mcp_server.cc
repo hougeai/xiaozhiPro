@@ -267,6 +267,7 @@ void McpServer::AddCommonTools() {
     // knowledge base
     AddTool("self.kb.query",
         "当用户咨询的问题超出你的认知范围，不可胡编乱造，可以通过关键词检索知识库获取更多的上下文"
+        "本工具为异步：调用后立即返回'知识库检索中'，并非检索结果，应告知用户正在检索请稍候；检索完成后会收到'知识库报告'。"
         "Args:"
         "query: str, 搜索的关键词，多个关键词用空格隔开",
         PropertyList({
@@ -301,7 +302,7 @@ void McpServer::AddCommonTools() {
             }
             int status_code = http->GetStatusCode();
             std::string response = http->ReadAll();
-            ESP_LOGI(TAG, "Mem response: %s", response.c_str());
+            ESP_LOGI(TAG, "kb.query response: %s", response.c_str());
             cJSON* root = cJSON_Parse(response.c_str());
             http->Close();
             if (status_code != 200) {
@@ -320,25 +321,68 @@ void McpServer::AddCommonTools() {
                 ESP_LOGE(TAG, "Failed to parse knowledge base response");
                 return R"({"success":false,"message":"Failed to parse knowledge base response"})";
             }
-            cJSON* data_array = cJSON_GetObjectItem(root, "data");
-            if (!cJSON_IsArray(data_array)) {
+            cJSON* data_item = cJSON_GetObjectItem(root, "data");
+            if (!data_item || !cJSON_IsString(data_item)) {
                 cJSON_Delete(root);
-                ESP_LOGE(TAG, "Invalid data format in knowledge base response");
-                return R"({"success":false,"message":"Invalid data format in knowledge base response"})";
+                return R"({"success":false,"message":"Empty"})";
             }
-            if (cJSON_GetArraySize(data_array) == 0) {
-                cJSON_Delete(root);
-                ESP_LOGW(TAG, "No data found in knowledge base response");
-                return R"({"success":true,"message":"未找到匹配结果，请尝试更换更相关的关键词重试"})";
-            }
-            // 直接将data内容转换为字符串返回
-            char* data_json = cJSON_PrintUnformatted(data_array);
-            std::string data_str(data_json);
-            cJSON_free(data_json);
+            std::string data_str = data_item->valuestring;
             cJSON_Delete(root);
             // 构造简化后的响应
             cJSON* result = cJSON_CreateObject();
-            cJSON_AddItemToObject(result, "data", cJSON_CreateString(data_str.c_str()));
+            cJSON_AddStringToObject(result, "data", data_str.c_str());
+            cJSON_AddBoolToObject(result, "success", true);
+            char* result_json = cJSON_PrintUnformatted(result);
+            std::string result_str(result_json);
+            cJSON_free(result_json);
+            cJSON_Delete(result);
+            return result_str;
+        });
+    AddTool("self.kb.retrieve",
+        "当且仅当收到'知识库报告'时，调用此工具检索最新消息，否则不要调用",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
+            http->SetHeader("Content-Type", "application/json");
+            http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
+            http->SetTimeout(5000); // 设置超时时间
+            std::string base_url = std::string(CONFIG_SERVER_URL) + "/kb_retrieve";
+    
+            if (!http->Open("GET", base_url)) {
+                ESP_LOGE(TAG, "Failed to open HTTP connection");
+                return R"({"success":false,"message":"Failed to connect to kb"})";
+            }
+            int status_code = http->GetStatusCode();
+            std::string response = http->ReadAll();
+            // ESP_LOGI(TAG, "Mem response: %s", response.c_str());
+            cJSON* root = cJSON_Parse(response.c_str());
+            http->Close();
+            if (status_code != 200) {
+                ESP_LOGE(TAG, "kb retrieve failed with status code: %d", status_code);
+                if (root) {
+                    cJSON* msg = cJSON_GetObjectItem(root, "msg");
+                    std::string error_msg = msg ? msg->valuestring : "Unknown error";
+                    ESP_LOGE(TAG, "kb retrieve error message: %s", error_msg.c_str());
+                    cJSON_Delete(root);
+                    return std::string(R"({"success":false,"message":")" + error_msg + R"("})");
+                }
+                return R"({"success":false,"message":"kb retrieve failed"})";
+            }
+            
+            if (!root) {
+                ESP_LOGE(TAG, "Failed to parse kb retrieve response");
+                return R"({"success":false,"message":"Failed to parse kb retrieve response"})";
+            }
+            cJSON* data_item = cJSON_GetObjectItem(root, "data");
+            if (!data_item || !cJSON_IsString(data_item)) {
+                cJSON_Delete(root);
+                return R"({"success":false,"message":"Empty"})";
+            }
+            std::string data_str = data_item->valuestring;
+            cJSON_Delete(root);
+            // 构造简化后的响应
+            cJSON* result = cJSON_CreateObject();
+            cJSON_AddStringToObject(result, "data", data_str.c_str());
             cJSON_AddBoolToObject(result, "success", true);
             char* result_json = cJSON_PrintUnformatted(result);
             std::string result_str(result_json);
@@ -519,7 +563,7 @@ void McpServer::AddCommonTools() {
             }
             int status_code = http->GetStatusCode();
             std::string response = http->ReadAll();
-            // ESP_LOGI(TAG, "Mem response: %s", response.c_str());
+            // ESP_LOGI(TAG, "openclaw.send response: %s", response.c_str());
             cJSON* root = cJSON_Parse(response.c_str());
             http->Close();
             if (status_code != 200) {
@@ -571,7 +615,7 @@ void McpServer::AddCommonTools() {
             }
             int status_code = http->GetStatusCode();
             std::string response = http->ReadAll();
-            // ESP_LOGI(TAG, "Mem response: %s", response.c_str());
+            // ESP_LOGI(TAG, "openclaw.retrieve response: %s", response.c_str());
             cJSON* root = cJSON_Parse(response.c_str());
             http->Close();
             if (status_code != 200) {
@@ -639,7 +683,7 @@ void McpServer::AddCommonTools() {
             }
             int status_code = http->GetStatusCode();
             std::string response = http->ReadAll();
-            // ESP_LOGI(TAG, "Mem response: %s", response.c_str());
+            // ESP_LOGI(TAG, "hermes.send response: %s", response.c_str());
             cJSON* root = cJSON_Parse(response.c_str());
             http->Close();
             if (status_code != 200) {
@@ -691,7 +735,7 @@ void McpServer::AddCommonTools() {
             }
             int status_code = http->GetStatusCode();
             std::string response = http->ReadAll();
-            // ESP_LOGI(TAG, "Mem response: %s", response.c_str());
+            // ESP_LOGI(TAG, "hermes.retrieve response: %s", response.c_str());
             cJSON* root = cJSON_Parse(response.c_str());
             http->Close();
             if (status_code != 200) {
