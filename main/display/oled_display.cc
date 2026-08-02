@@ -48,6 +48,7 @@ OledDisplay::OledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handl
     lvgl_port_cfg_t port_cfg = ESP_LVGL_PORT_INIT_CONFIG();
     port_cfg.task_priority = 1;
     port_cfg.task_stack = 6144;
+    port_cfg.timer_period_ms = 50;  // 稳定的 LVGL 刷新节拍，避免刷新过于集中触发看门狗
 #if CONFIG_SOC_CPU_CORES_NUM > 1
     port_cfg.task_affinity = 1;
 #endif
@@ -60,7 +61,10 @@ OledDisplay::OledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handl
         .control_handle = nullptr,
         .buffer_size = static_cast<uint32_t>(width_ * height_),
         .double_buffer = false,
-        .trans_size = 0,
+        // trans_size 限制单笔 SPI 传输字节数，避免 flush 一次性发送整块缓冲造成长时间
+        // 阻塞，导致高负载场景下 wait_for_flushing 卡死、看门狗触发。拆成多笔小传输后每
+        // 笔之间释放 CPU，idle 任务可正常喂 task_wdt。OLED 为单色 1bpp，单行字节数为 width_/8。
+        .trans_size = static_cast<uint32_t>(width_ / 8 * 4),
         .hres = static_cast<uint32_t>(width_),
         .vres = static_cast<uint32_t>(height_),
         .monochrome = true,
@@ -468,7 +472,7 @@ void OledDisplay::UpdateStatusBar(bool update_all) {
         // 如果静音状态改变，则更新图标
         if (codec->output_volume() == 0 && !muted_) {
             muted_ = true;
-            lv_label_set_text(mute_label_, FONT_AWESOME_VOLUME_XMARK);
+            lv_label_set_text(mute_label_, MATERIAL_SYMBOLS_VOLUME_MUTE);
         } else if (codec->output_volume() > 0 && muted_) {
             muted_ = false;
             lv_label_set_text(mute_label_, "");
@@ -506,15 +510,15 @@ void OledDisplay::UpdateStatusBar(bool update_all) {
     const char* icon = nullptr;
     if (board.GetBatteryLevel(battery_level, charging, discharging)) {
         if (charging) {
-            icon = FONT_AWESOME_BATTERY_BOLT;
+            icon = MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_BOLT;
         } else {
             const char* levels[] = {
-                FONT_AWESOME_BATTERY_EMPTY, // 0-19%
-                FONT_AWESOME_BATTERY_QUARTER,    // 20-39%
-                FONT_AWESOME_BATTERY_HALF,    // 40-59%
-                FONT_AWESOME_BATTERY_THREE_QUARTERS,    // 60-79%
-                FONT_AWESOME_BATTERY_FULL, // 80-99%
-                FONT_AWESOME_BATTERY_FULL, // 100%
+                MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_1, // 0-19%
+                MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_2,    // 20-39%
+                MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_3,    // 40-59%
+                MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_4,    // 60-79%
+                MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_6, // 80-99%
+                MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_6, // 100%
             };
             icon = levels[battery_level / 20];
         }
@@ -525,7 +529,7 @@ void OledDisplay::UpdateStatusBar(bool update_all) {
         }
 
         if (low_battery_popup_ != nullptr) {
-            if (strcmp(icon, FONT_AWESOME_BATTERY_EMPTY) == 0 && discharging) {
+            if (strcmp(icon, MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_1) == 0 && discharging) {
                 if (lv_obj_has_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN)) { // 如果低电量提示框隐藏，则显示
                     lv_obj_remove_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN);
                     app.PlaySound(Lang::Sounds::OGG_LOW_BATTERY);

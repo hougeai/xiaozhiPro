@@ -6,7 +6,7 @@
 #include "led/single_led.h"
 #include "config.h"
 #include "assets/lang_config.h"
-#include <font_awesome.h>
+#include <material_symbols.h>
 
 #include <esp_lcd_panel_vendor.h>
 #include <wifi_station.h>

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstring>
 #include <esp_pthread.h>
+#include <memory>
 
 #include "application.h"
 #include "display.h"
@@ -1009,12 +1010,33 @@ void McpServer::AddCommonTools() {
             auto song = properties["song"].value<std::string>();
             auto singer = properties["singer"].value<std::string>();
             ESP_LOGI(TAG, "Playing music: %s %s", song.c_str(), singer.c_str());
-            std::string result = app.music_->SinglePlay(song, singer);
-            if (result.empty()) {
-                return R"({"success":true,"message":"音乐开始播放"})";
-            } else {
-                return std::string(R"({"success":true,"message":")" + result + R"("})");
-            }
+            // 异步播放：SinglePlay 内部有同步 HTTP 请求，会阻塞调用线程。
+            // MCP 工具在协议接收任务中执行，阻塞会导致整个 MCP 通道卡死、设备无响应。
+            // 因此把实际播放丢到独立任务，工具立即返回"正在播放"。
+            auto* music = app.music_;
+            auto song_ptr = std::make_shared<std::string>(song);
+            auto singer_ptr = std::make_shared<std::string>(singer);
+            // xTaskCreate 要求 C 函数指针，带捕获的 lambda 无法转换，
+            // 因此把 music 指针与字符串一起打包进 param 传递
+            struct SinglePlayArgs {
+                Esp32Music* music;
+                std::shared_ptr<std::string> song;
+                std::shared_ptr<std::string> singer;
+            };
+            xTaskCreate(
+                [](void* param) {
+                    auto* args = static_cast<SinglePlayArgs*>(param);
+                    std::string song = *args->song;
+                    std::string singer = *args->singer;
+                    Esp32Music* music = args->music;
+                    delete args;
+                    music->SinglePlay(song, singer);
+                    vTaskDelete(nullptr);
+                },
+                "music_single_play", 8192,
+                new SinglePlayArgs{music, song_ptr, singer_ptr},
+                5, nullptr);
+            return R"({"success":true,"message":"音乐正在播放中"})";
         });
     AddTool("self.music.playlist.loop",
         "当用户要求播放歌单时使用此工具，有顺序和随机两种方式。\n"
@@ -1041,12 +1063,20 @@ void McpServer::AddCommonTools() {
             }
             auto mode = properties["mode"].value<std::string>();
             ESP_LOGI(TAG, "Playing music collection: %s ", mode.c_str());
-            std::string result = app.music_->LoopPlay(mode);
-            if (result.empty()) {
-                return R"({"success":true,"message":"播放歌单任务开启成功"})";
-            } else {
-                return std::string(R"({"success":false,"message":")" + result + R"("})");
-            }
+            // 异步播放：LoopPlay 内部同步请求歌单，避免阻塞 MCP 接收任务
+            auto* music = app.music_;
+            auto mode_ptr = new std::string(mode);
+            xTaskCreate(
+                [](void* param) {
+                    auto* args = static_cast<std::pair<Esp32Music*, std::string>*>(param);
+                    args->first->LoopPlay(args->second);
+                    delete args;
+                    vTaskDelete(nullptr);
+                },
+                "music_loop_play", 8192,
+                new std::pair<Esp32Music*, std::string>(music, *mode_ptr), 5, nullptr);
+            delete mode_ptr;
+            return R"({"success":true,"message":"播放歌单任务开启成功"})";
         });
     AddTool("self.music.playlist.refresh",
         "当用户要求刷新歌单时使用此工具。\n"
@@ -1089,7 +1119,7 @@ void McpServer::AddCommonTools() {
             ESP_LOGI(TAG, "Playing next song");
             std::string result = app.music_->PlayNextSong();
             if (result.empty()) {
-                return R"({"success":true,"message":"正在切换到下一首歌曲"})";
+                return R"({"success":true,"message":"已切换至下一首歌曲，后台加载中"})";
             } else {
                 return std::string(R"({"success":false,"message":")" + result + R"("})");
             }

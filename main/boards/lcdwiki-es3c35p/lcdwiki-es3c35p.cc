@@ -169,6 +169,7 @@ private:
         lv_init();
         lvgl_port_cfg_t port_cfg = ESP_LVGL_PORT_INIT_CONFIG();
         port_cfg.task_priority = 1;
+        port_cfg.timer_period_ms = 50;  // 稳定的 LVGL 刷新节拍，避免刷新过于集中触发看门狗
 #if CONFIG_SOC_CPU_CORES_NUM > 1
         port_cfg.task_affinity = 1;
 #endif
@@ -180,7 +181,10 @@ private:
             .control_handle = nullptr,
             .buffer_size = static_cast<uint32_t>(DISPLAY_BUFFER_SIZE),
             .double_buffer = false,
-            .trans_size = 0,
+            // trans_size 限制单笔 SPI 传输字节数（设为单行大小），避免 flush 一次性发送整
+            // 块缓冲造成长时间阻塞，导致高负载场景下 wait_for_flushing 卡死、看门狗触发。
+            // 拆成多笔小传输后每笔之间释放 CPU，idle 任务可正常喂 task_wdt。
+            .trans_size = static_cast<uint32_t>(DISPLAY_WIDTH * 2),
             .hres = static_cast<uint32_t>(DISPLAY_WIDTH),
             .vres = static_cast<uint32_t>(DISPLAY_HEIGHT),
             .monochrome = false,

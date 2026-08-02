@@ -14,14 +14,15 @@
 #include <esp_log.h>
 #include <esp_err.h>
 #include <esp_lvgl_port.h>
-#include <font_awesome.h>
+#include <material_symbols.h>
+#include <noto_emoji.h>
 #include <lvgl.h>
 
 #define TAG "CustomOledDisplay"
 
 LV_FONT_DECLARE(BUILTIN_TEXT_FONT);
 LV_FONT_DECLARE(BUILTIN_ICON_FONT);
-LV_FONT_DECLARE(font_awesome_30_1);
+LV_FONT_DECLARE(font_material_symbols_30_1);
 
 CustomOledDisplay::CustomOledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,
     int width, int height, bool mirror_x, bool mirror_y)
@@ -31,7 +32,7 @@ CustomOledDisplay::CustomOledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd
 
     auto text_font = std::make_shared<LvglBuiltInFont>(&BUILTIN_TEXT_FONT);
     auto icon_font = std::make_shared<LvglBuiltInFont>(&BUILTIN_ICON_FONT);
-    auto large_icon_font = std::make_shared<LvglBuiltInFont>(&font_awesome_30_1);
+    auto large_icon_font = std::make_shared<LvglBuiltInFont>(&font_material_symbols_30_1);
     
     auto dark_theme = new LvglTheme("dark");
     dark_theme->set_text_font(text_font);
@@ -46,6 +47,7 @@ CustomOledDisplay::CustomOledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd
     lvgl_port_cfg_t port_cfg = ESP_LVGL_PORT_INIT_CONFIG();
     port_cfg.task_priority = 1;
     port_cfg.task_stack = 6144;
+    port_cfg.timer_period_ms = 50;  // 稳定的 LVGL 刷新节拍，避免刷新过于集中触发看门狗
 #if CONFIG_SOC_CPU_CORES_NUM > 1
     port_cfg.task_affinity = 1;
 #endif
@@ -58,7 +60,10 @@ CustomOledDisplay::CustomOledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd
         .control_handle = nullptr,
         .buffer_size = static_cast<uint32_t>(width_ * height_),
         .double_buffer = false,
-        .trans_size = 0,
+        // trans_size 限制单笔 SPI 传输字节数，避免 flush 一次性发送整块缓冲造成长时间
+        // 阻塞，导致高负载场景下 wait_for_flushing 卡死、看门狗触发。拆成多笔小传输后每
+        // 笔之间释放 CPU，idle 任务可正常喂 task_wdt。OLED 为单色 1bpp，单行字节数为 width_/8。
+        .trans_size = static_cast<uint32_t>(width_ / 8 * 4),
         .hres = static_cast<uint32_t>(width_),
         .vres = static_cast<uint32_t>(height_),
         .monochrome = true,
@@ -178,7 +183,7 @@ void CustomOledDisplay::SetupUI_128x64() {
     // 表情符号标签，默认为 AI 芯片图标并居中显示
     emotion_label_ = lv_label_create(content_left_);
     lv_obj_set_style_text_font(emotion_label_, large_icon_font, 0);
-    lv_label_set_text(emotion_label_, FONT_AWESOME_MICROCHIP_AI);
+    lv_label_set_text(emotion_label_, MATERIAL_SYMBOLS_ROBOT_2);
     lv_obj_center(emotion_label_);
     lv_obj_set_style_pad_top(emotion_label_, 8, 0);
 
@@ -297,7 +302,7 @@ void CustomOledDisplay::SetupUI_128x32() {
 
     emotion_label_ = lv_label_create(content_);
     lv_obj_set_style_text_font(emotion_label_, large_icon_font, 0);
-    lv_label_set_text(emotion_label_, FONT_AWESOME_MICROCHIP_AI);
+    lv_label_set_text(emotion_label_, MATERIAL_SYMBOLS_ROBOT_2);
     lv_obj_center(emotion_label_);
 
     /* Right side：右侧占据剩余宽度的区域，采用纵向流式布局，包含状态栏和聊天消息 */
@@ -375,7 +380,7 @@ void CustomOledDisplay::SetupUI_128x32() {
 
 // 根据传入的 emotion 字符串获取对应的 FontAwesome 图标并设置到 emotion_label_
 void CustomOledDisplay::SetEmotion(const char* emotion) {
-    const char* utf8 = font_awesome_get_utf8(emotion);
+    const char* utf8 = noto_emoji_get_utf8(emotion);
     DisplayLockGuard lock(this);
     if (emotion_label_ == nullptr) {
         return;
@@ -383,7 +388,12 @@ void CustomOledDisplay::SetEmotion(const char* emotion) {
     if (utf8 != nullptr) {
         lv_label_set_text(emotion_label_, utf8);
     } else {
-        lv_label_set_text(emotion_label_, FONT_AWESOME_NEUTRAL);
+        utf8 = material_symbols_get_utf8(emotion);
+        if (utf8 != nullptr) {
+            lv_label_set_text(emotion_label_, utf8);
+        } else {
+            lv_label_set_text(emotion_label_, MATERIAL_SYMBOLS_ROBOT_2);
+        }
     }
 }
 
@@ -413,7 +423,7 @@ void CustomOledDisplay::UpdateStatusBar(bool update_all) {
         // 如果静音状态改变，则更新图标
         if (codec->output_volume() == 0 && !muted_) {
             muted_ = true;
-            lv_label_set_text(mute_label_, FONT_AWESOME_VOLUME_XMARK);
+            lv_label_set_text(mute_label_, MATERIAL_SYMBOLS_VOLUME_MUTE);
         } else if (codec->output_volume() > 0 && muted_) {
             muted_ = false;
             lv_label_set_text(mute_label_, "");
@@ -456,15 +466,15 @@ void CustomOledDisplay::UpdateStatusBar(bool update_all) {
         // 获取电池图标
         const char* battery_icon = nullptr;
         if (charging) {
-            battery_icon = FONT_AWESOME_BATTERY_BOLT;
+            battery_icon = MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_BOLT;
         } else {
             const char* levels[] = {
-                FONT_AWESOME_BATTERY_EMPTY, // 0-19%
-                FONT_AWESOME_BATTERY_QUARTER,    // 20-39%
-                FONT_AWESOME_BATTERY_HALF,    // 40-59%
-                FONT_AWESOME_BATTERY_THREE_QUARTERS,    // 60-79%
-                FONT_AWESOME_BATTERY_FULL, // 80-99%
-                FONT_AWESOME_BATTERY_FULL, // 100%
+                MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_1, // 0-19%
+                MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_2,    // 20-39%
+                MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_3,    // 40-59%
+                MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_4,    // 60-79%
+                MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_6, // 80-99%
+                MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_6, // 100%
             };
             battery_icon = levels[battery_level / 20];
         }

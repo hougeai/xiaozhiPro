@@ -270,18 +270,21 @@ void Application::Run() {
                 // 闹钟来了
                 auto state = GetDeviceState();
                 ESP_LOGI(TAG, "Alarm coming, current state: %s", state_machine_.GetStateName(state));
-                if (state != kDeviceStateAlarm){
-                    ESP_LOGI(TAG, "Alarm state not set");
-                    if (state == kDeviceStateSpeaking) {
-                        AbortSpeaking(kAbortReasonNone);
-                    } else if (state == kDeviceStateListening) {
-                        SetDeviceState(kDeviceStateIdle);
-                    }
-                    SetDeviceState(kDeviceStateAlarm);
-                } else {
-                    // 在闹钟状态且音频服务空闲：播放闹钟音乐
+                if (state == kDeviceStateAlarm) {
+                    // 已在闹钟状态且音频服务空闲：播放闹钟音乐
                     ESP_LOGI(TAG, "Alarm ring, playing sound %d", (int)audio_service_.IsIdle());
                     if (audio_service_.IsIdle()) PlaySound(Lang::Sounds::OGG_RING);
+                } else if (state == kDeviceStateSpeaking || music_playing_) {
+                    // 正在播报或播放音乐时不打断，保留 ring_flag_，等对话结束/音乐结束
+                    // 回到 idle 后，再由下一次时钟 tick 进入闹钟状态响铃。
+                    ESP_LOGI(TAG, "Alarm suppressed during speaking/music, will ring after idle");
+                } else {
+                    // listening 等其他状态：允许打断，进入闹钟状态
+                    if (state == kDeviceStateListening) {
+                        SetDeviceState(kDeviceStateIdle);
+                    }
+                    ESP_LOGI(TAG, "Alarm triggered, entering alarm state");
+                    SetDeviceState(kDeviceStateAlarm);
                 }
             }
         }
@@ -564,7 +567,14 @@ void Application::InitializeProtocol() {
     });
 
     protocol_->OnAudioChannelClosed([this, &board]() {
-        board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+        // 音乐播放中会主动关闭服务器音频通道，若此时直接降为 MAX_MODEM 省电模式，
+        // WiFi 周期性休眠会导致音频流接收不连续、缓冲被抽干而卡顿。因此仅在非音乐
+        // 播放时才恢复低功耗；音乐停止由 Esp32Music::StopStreaming 负责恢复 LOW_POWER。
+        if (!music_playing_) {
+            board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+        } else {
+            ESP_LOGI(TAG, "Audio channel closed while music playing, keep PERFORMANCE");
+        }
         Schedule([this]() {
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
@@ -898,6 +908,14 @@ void Application::HandleWakeWordDetectedEvent() {
         }
     } else if (state == kDeviceStateActivating) {
         // Restart the activation check if the wake word is detected during activation
+        SetDeviceState(kDeviceStateIdle);
+    } else if (state == kDeviceStateAlarm) {
+        // The wake word during an alarm only means "stop the alarm". Clear the
+        // ring flag so the clock tick stops replaying OGG_RING, and return to
+        // idle. We do NOT start a conversation here; the device simply goes back
+        // to standby and keeps listening for the next wake word.
+        ESP_LOGI(TAG, "Wake word detected during alarm, stopping alarm");
+        alarm_m_->ClearRing();
         SetDeviceState(kDeviceStateIdle);
     }
 }
@@ -1310,6 +1328,7 @@ void Application::FlushConversationQueue() {
         while (retry_count < max_retries && !success) {
             if (http->Open("POST", url)) {
                 int status_code = http->GetStatusCode();
+                http->ReadAll();  // 消费响应体，避免 Close 时底层报 "expected N bytes" 提前断连告警（200 与非 200 都需读取）
                 if (status_code == 200) {
                     ESP_LOGI(TAG, "Successfully sent %d conversations to server", temp_queue.size());
                     success = true;

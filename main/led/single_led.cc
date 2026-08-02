@@ -160,6 +160,10 @@ void SingleLed::OnStateChanged() {
             SetColor(0, DEFAULT_BRIGHTNESS, 0);
             StartContinuousBlink(500);
             break;
+        case kDeviceStateAlarm:
+            SetColor(DEFAULT_BRIGHTNESS, DEFAULT_BRIGHTNESS, 0);  // 黄色闪烁表示闹钟响铃
+            StartContinuousBlink(300);
+            break;
         default:
             ESP_LOGW(TAG, "Unknown led strip event: %d", device_state);
             return;

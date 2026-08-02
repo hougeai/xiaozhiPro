@@ -16,6 +16,9 @@ void display_utils::LoadIdleInfoSettings(std::string* idle_info_texts, std::vect
         ESP_LOGE(TAG, "Failed to create HTTP client for display info");
         return;
     }
+
+    // 设置较短超时，避免服务器无响应时后台任务长时间挂起（/device_display 异常时会卡死）
+    http->SetTimeout(10000);
     
     http->SetHeader("Content-Type", "application/json");
     http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());

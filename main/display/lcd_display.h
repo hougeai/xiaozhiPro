@@ -42,6 +42,7 @@ protected:
     int items_per_page_ = 4;
     int refresh_interval_ = 5;
     bool idle_info_loaded_ = false;
+    bool idle_info_loading_ = false;
     int idle_counter_ = 0;
 
     void InitializeLcdThemes();
@@ -52,6 +53,7 @@ protected:
     void ShowIdleInfo();
     void HideIdleInfo();
     void LoadIdleInfoSettings();
+    void LoadIdleInfoSettingsAsync();
     void SetLabelScrollSpeed(lv_obj_t* label, int px_per_sec);
 
 protected:

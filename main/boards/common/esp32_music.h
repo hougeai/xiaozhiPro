@@ -40,7 +40,7 @@ private:
     std::string current_music_url_;
     std::string current_song_name_;
     int current_song_id_ = 0;
-    int current_quota_ = 0;
+    std::atomic<int> current_quota_{0};
     bool song_name_displayed_;
     
     // 歌词相关
@@ -52,6 +52,10 @@ private:
     TaskHandle_t download_task_handle_ = nullptr;
     TaskHandle_t play_task_handle_ = nullptr;
     TaskHandle_t lyric_update_task_handle_ = nullptr;
+    // 保护 StartStreaming/StopStreaming/StopLoopPlay 的整段临界区，
+    // 避免多次 SinglePlay/LoopPlay 并发调用时状态交错导致任务秒退或撕裂。
+    // 使用 recursive_mutex：StartStreaming 持锁内会调用 StopStreaming，需允许同一线程重入。
+    std::recursive_mutex streaming_mutex_;
     std::atomic<bool> download_task_finished_{false};
     std::atomic<bool> play_task_finished_{false};
     std::atomic<bool> lyric_task_finished_{false};
@@ -100,7 +104,7 @@ private:
 
     // 歌单循环播放相关
     std::vector<std::map<std::string, std::string>> music_collection_;  // 存储歌单
-    int current_song_index_ = 0;  // 当前播放歌曲索引
+    std::atomic<int> current_song_index_{0};  // 当前播放歌曲索引
     std::atomic<bool> is_loop_playing_{false};  // 是否正在循环播放
     TaskHandle_t loop_play_task_handle_ = nullptr;  // 循环播放任务句柄
     void LoopPlayTask();

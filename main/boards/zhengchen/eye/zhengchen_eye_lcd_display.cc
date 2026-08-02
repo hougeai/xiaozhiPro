@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <vector>
 #include <algorithm>
-#include <font_awesome.h>
+#include <material_symbols.h>
 #include <esp_log.h>
 #include <esp_lvgl_port.h>
 #include <string.h>
@@ -219,7 +219,7 @@ void ZhengchenEyeLcdDisplay::UpdateStatusBar(bool update_all) {
                 if (board.GetBatteryLevel(battery_level, charging, discharging)) {
                     if (charging) {
                         lv_obj_set_style_text_font(status_label_, icon_font, 0);
-                        lv_label_set_text(status_label_, FONT_AWESOME_BATTERY_BOLT);
+                        lv_label_set_text(status_label_, MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_BOLT);
                     } else {
                         lv_obj_set_style_text_font(status_label_, text_font, 0);
                         char battery_str[16];
@@ -248,7 +248,7 @@ void ZhengchenEyeLcdDisplay::UpdateStatusBar(bool update_all) {
             {
                 if (codec->output_volume() == 0) {
                     lv_obj_set_style_text_font(status_label_, icon_font, 0);
-                    lv_label_set_text(status_label_, FONT_AWESOME_VOLUME_XMARK);
+                    lv_label_set_text(status_label_, MATERIAL_SYMBOLS_VOLUME_MUTE);
                 } else {
                     lv_obj_set_style_text_font(status_label_, text_font, 0);
                     char volume_str[16];

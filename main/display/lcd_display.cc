@@ -140,6 +140,7 @@ SpiLcdDisplay::SpiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
     ESP_LOGI(TAG, "Initialize LVGL port");
     lvgl_port_cfg_t port_cfg = ESP_LVGL_PORT_INIT_CONFIG();
     port_cfg.task_priority = 1;
+    port_cfg.timer_period_ms = 50;  // 稳定的 LVGL 刷新节拍，避免刷新过于集中触发看门狗
 #if CONFIG_SOC_CPU_CORES_NUM > 1
     port_cfg.task_affinity = 1;
 #endif
@@ -152,7 +153,10 @@ SpiLcdDisplay::SpiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
         .control_handle = nullptr,
         .buffer_size = static_cast<uint32_t>(width_ * 20),
         .double_buffer = false,
-        .trans_size = 0,
+        // trans_size 限制单笔 SPI 传输字节数（设为单行大小），避免 flush 一次性发送整块缓冲
+        // 造成长时间阻塞，导致音乐播放等高负载场景下 wait_for_flushing 卡死、看门狗触发。
+        // 拆成多笔小传输后，每笔之间释放 CPU，idle 任务可正常喂 task_wdt。
+        .trans_size = static_cast<uint32_t>(width_ * 2),
         .hres = static_cast<uint32_t>(width_),
         .vres = static_cast<uint32_t>(height_),
         .monochrome = false,
@@ -505,7 +509,7 @@ void LcdDisplay::SetupUI() {
     lv_obj_center(emoji_label_);
     lv_obj_set_style_text_font(emoji_label_, large_icon_font, 0);
     lv_obj_set_style_text_color(emoji_label_, lvgl_theme->text_color(), 0);
-    lv_label_set_text(emoji_label_, FONT_AWESOME_MICROCHIP_AI);
+    lv_label_set_text(emoji_label_, MATERIAL_SYMBOLS_ROBOT_2);
 
     // Create idle info labels
     for (int i = 0; i < 8; i++) {
@@ -1408,7 +1412,7 @@ void LcdDisplay::UpdateStatusBar(bool update_all) {
         // 如果静音状态改变，则更新图标
         if (codec->output_volume() == 0 && !muted_) {
             muted_ = true;
-            lv_label_set_text(mute_label_, FONT_AWESOME_VOLUME_XMARK);
+            lv_label_set_text(mute_label_, MATERIAL_SYMBOLS_VOLUME_MUTE);
         } else if (codec->output_volume() > 0 && muted_) {
             muted_ = false;
             lv_label_set_text(mute_label_, "");
@@ -1461,15 +1465,15 @@ void LcdDisplay::UpdateStatusBar(bool update_all) {
     const char* icon = nullptr;
     if (board.GetBatteryLevel(battery_level, charging, discharging)) {
         if (charging) {
-            icon = FONT_AWESOME_BATTERY_BOLT;
+            icon = MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_BOLT;
         } else {
             const char* levels[] = {
-                FONT_AWESOME_BATTERY_EMPTY, // 0-19%
-                FONT_AWESOME_BATTERY_QUARTER,    // 20-39%
-                FONT_AWESOME_BATTERY_HALF,    // 40-59%
-                FONT_AWESOME_BATTERY_THREE_QUARTERS,    // 60-79%
-                FONT_AWESOME_BATTERY_FULL, // 80-99%
-                FONT_AWESOME_BATTERY_FULL, // 100%
+                MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_1, // 0-19%
+                MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_2,    // 20-39%
+                MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_3,    // 40-59%
+                MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_4,    // 60-79%
+                MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_6, // 80-99%
+                MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_6, // 100%
             };
             icon = levels[battery_level / 20];
         }
@@ -1480,7 +1484,7 @@ void LcdDisplay::UpdateStatusBar(bool update_all) {
         }
 
         if (low_battery_popup_ != nullptr) {
-            if (strcmp(icon, FONT_AWESOME_BATTERY_EMPTY) == 0 && discharging) {
+            if (strcmp(icon, MATERIAL_SYMBOLS_BATTERY_ANDROID_FRAME_1) == 0 && discharging) {
                 if (lv_obj_has_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN)) { // 如果低电量提示框隐藏，则显示
                     lv_obj_remove_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN);
                     app.PlaySound(Lang::Sounds::OGG_LOW_BATTERY);
@@ -1522,10 +1526,9 @@ void LcdDisplay::UpdateStatusBar(bool update_all) {
 void LcdDisplay::ShowIdleInfo() {   
     DisplayLockGuard lock(this);
 
-    // 第一次显示待机信息时加载设置
-    if (!idle_info_loaded_) {
-        LoadIdleInfoSettings();
-        idle_info_loaded_ = true;
+    // 第一次显示待机信息时异步加载设置，避免阻塞主任务（服务器响应慢/超时会拖垮唤醒与状态机）
+    if (!idle_info_loaded_ && !idle_info_loading_) {
+        LoadIdleInfoSettingsAsync();
     }
     
     // 先隐藏所有标签
@@ -1640,6 +1643,26 @@ void LcdDisplay::HideIdleInfo() {
 
 void LcdDisplay::LoadIdleInfoSettings() {
     display_utils::LoadIdleInfoSettings(idle_info_texts_, valid_idle_indices_, refresh_interval_);
+}
+
+void LcdDisplay::LoadIdleInfoSettingsAsync() {
+    idle_info_loading_ = true;
+    // 在独立任务中执行阻塞式 HTTPS 请求，避免拖垮 Application 主任务（唤醒/状态机/MQTT）
+    xTaskCreate(
+        [](void* arg) {
+            auto* display = static_cast<LcdDisplay*>(arg);
+            // 阻塞加载（可能耗时/超时），运行在非主任务上下文中
+            display->LoadIdleInfoSettings();
+            // 回到主任务上下文完成状态切换与刷新，保证对 idle_info_texts_ 的访问线程安全
+            Application::GetInstance().Schedule([display]() {
+                display->idle_info_loading_ = false;
+                display->idle_info_loaded_ = true;
+                display->idle_counter_ = 0;
+                display->ShowIdleInfo();
+            });
+            vTaskDelete(nullptr);
+        },
+        "idle_info_loader", 8192, this, 1, nullptr);
 }
 
 void LcdDisplay::SetLabelScrollSpeed(lv_obj_t* label, int px_per_sec) {
