@@ -1,9 +1,17 @@
 #include "alarm.h"
 #include <ctime>
+#include <new>
+#include <utility>
 #include <cJSON.h>
+#include <esp_err.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include "board.h"
 #include "system_info.h"
 #define TAG "AlarmManager"
+
+// 闹钟云同步的 HTTP 超时（毫秒）。服务端异常时必须尽快返回，避免长时间占用调用方任务。
+#define ALARM_HTTP_TIMEOUT_MS 5000
 
 std::string FormatTimestamp(time_t timestamp) {
     struct tm* local_time = localtime(&timestamp);
@@ -32,7 +40,29 @@ AlarmManager::AlarmManager(){
     };
     ESP_ERROR_CHECK(esp_timer_create(&timer_args, &timer_));
 
-    ReloadAlarms();
+    // 启动期闹钟加载涉及云端同步（最长阻塞 ALARM_HTTP_TIMEOUT_MS），
+    // 放在后台任务里执行，避免阻塞构造方（main 任务）的后续初始化。
+    StartReloadTask();
+}
+
+void AlarmManager::StartReloadTask() {
+    if (init_started_) {
+        return;
+    }
+    init_started_ = true;
+    auto task = [](void* arg) {
+        auto* self = static_cast<AlarmManager*>(arg);
+        // 网络不可用会由 ReloadAlarms 内部的 HTTP 超时（ALARM_HTTP_TIMEOUT_MS）
+        // 兜底失败并回退本地闹钟，这里无需自行探测网络状态。
+        self->ReloadAlarms();
+        vTaskDelete(nullptr);
+    };
+    if (xTaskCreate(task, "alarm_init", 4096, this, 1, nullptr) != pdPASS) {
+        // 任务创建失败则退化为同步加载，保证闹钟至少能初始化
+        ESP_LOGW(TAG, "Failed to create alarm init task, fall back to sync ReloadAlarms");
+        init_started_ = false;
+        ReloadAlarms();
+    }
 }
 
 AlarmManager::~AlarmManager(){
@@ -44,75 +74,114 @@ AlarmManager::~AlarmManager(){
 }
 
 std::string AlarmManager::ReloadAlarms() {
-    Settings settings_("alarm_clock", true); // 闹钟设置
-    // 先清空当前闹钟列表
-    alarms_.clear();
-    // 先从云端获取闹钟列表，失败则从Setting里面读取闹钟列表
-    std::string sync_result = SyncAlarmFromCloud();
-    if (!sync_result.empty()) {
-        ESP_LOGW(TAG, "Failed to sync alarms from cloud: %s, loading from local settings", sync_result.c_str());
-        for(int i = 0; i < max_alarms_; i++){
-            std::string alarm_name = settings_.GetString("alarm_" + std::to_string(i));
-            if(alarm_name != ""){
-                Alarm alarm;
-                alarm.id = i; // 闹钟的索引
-                alarm.name = alarm_name;
-                alarm.time = settings_.GetInt("alarm_time_" + std::to_string(i));
-                alarm.repeat = settings_.GetInt("alarm_rpt_" + std::to_string(i));
-                alarm.interval = settings_.GetInt("alarm_itv_" + std::to_string(i));
-                // 检查本地存储的闹钟时间是否已过期，如果是重复闹钟则顺延到未来
-                time_t now = time(NULL);
-                if (alarm.time <= now) {
-                    if (alarm.repeat > 0 && alarm.interval > 0) {
-                        int periods = (now - alarm.time) / alarm.interval + 1;
-                        alarm.time += periods * alarm.interval;
-                        // 更新到NVS
-                        settings_.SetInt("alarm_time_" + std::to_string(i), alarm.time);
-                        ESP_LOGI(TAG, "Alarm %s expired, adjusted to future: %s", alarm.name.c_str(), FormatTimestamp(alarm.time).c_str());
-                    } else {
-                        ESP_LOGI(TAG, "Alarm %s expired and not repeatable, skipping", alarm.name.c_str());
-                        continue;
-                    }
-                }
+    // 1.锁外拉取云端闹钟（网络操作不持锁），拿到解析结果后再统一写入
+    std::vector<Alarm> cloud_alarms;
+    std::vector<std::pair<Alarm, std::string>> pending;
+    std::string sync_result = SyncAlarmFromCloud(cloud_alarms, pending);
+
+    // 2.持锁重建闹钟列表
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        Settings settings_("alarm_clock", true); // 闹钟设置
+        alarms_.clear();
+        if (sync_result.empty()) {
+            // 云端拉取成功：用云端数据覆盖本地设置
+            for(int i = 0; i < max_alarms_; i++){
+                settings_.SetString("alarm_" + std::to_string(i), "");
+                settings_.SetInt("alarm_time_" + std::to_string(i), 0);
+                settings_.SetInt("alarm_rpt_" + std::to_string(i), 0);
+                settings_.SetInt("alarm_itv_" + std::to_string(i), 0);
+            }
+            for (const auto& alarm : cloud_alarms) {
                 alarms_.push_back(alarm);
-                ESP_LOGI(TAG, "Alarm %d %s add again at %s", alarm.id, alarm.name.c_str(), FormatTimestamp(alarm.time).c_str());
+                settings_.SetString("alarm_" + std::to_string(alarm.id), alarm.name);
+                settings_.SetInt("alarm_time_" + std::to_string(alarm.id), alarm.time);
+                settings_.SetInt("alarm_rpt_" + std::to_string(alarm.id), alarm.repeat);
+                settings_.SetInt("alarm_itv_" + std::to_string(alarm.id), alarm.interval);
+                ESP_LOGI(TAG, "Loaded alarm from cloud: %s %s", alarm.name.c_str(), FormatTimestamp(alarm.time).c_str());
+            }
+        } else {
+            // 云端失败：回退到本地设置，保持原有数据不被清空
+            ESP_LOGW(TAG, "Failed to sync alarms from cloud: %s, loading from local settings", sync_result.c_str());
+            for(int i = 0; i < max_alarms_; i++){
+                std::string alarm_name = settings_.GetString("alarm_" + std::to_string(i));
+                if(alarm_name != ""){
+                    Alarm alarm{};
+                    alarm.id = i; // 闹钟的索引
+                    alarm.name = alarm_name;
+                    alarm.time = settings_.GetInt("alarm_time_" + std::to_string(i));
+                    alarm.repeat = settings_.GetInt("alarm_rpt_" + std::to_string(i));
+                    alarm.interval = settings_.GetInt("alarm_itv_" + std::to_string(i));
+                    // 检查本地存储的闹钟时间是否已过期，如果是重复闹钟则顺延到未来
+                    time_t now = time(NULL);
+                    if (alarm.time <= now) {
+                        if (alarm.repeat > 0 && alarm.interval > 0) {
+                            int periods = (now - alarm.time) / alarm.interval + 1;
+                            alarm.time += periods * alarm.interval;
+                            // 更新到NVS
+                            settings_.SetInt("alarm_time_" + std::to_string(i), alarm.time);
+                            ESP_LOGI(TAG, "Alarm %s expired, adjusted to future: %s", alarm.name.c_str(), FormatTimestamp(alarm.time).c_str());
+                        } else {
+                            ESP_LOGI(TAG, "Alarm %s expired and not repeatable, skipping", alarm.name.c_str());
+                            continue;
+                        }
+                    }
+                    alarms_.push_back(alarm);
+                    ESP_LOGI(TAG, "Alarm %d %s add again at %s", alarm.id, alarm.name.c_str(), FormatTimestamp(alarm.time).c_str());
+                }
             }
         }
     }
-    
+
     time_t now = time(NULL);
-    // 清除过期的闹钟
+    // 清除过期的闹钟（内部自行加锁）
     ClearOverdueAlarm(now);
-    // 获取最近的闹钟
-    Alarm *current_alarm_ = GetProximateAlarm(now);
-    if(current_alarm_ != nullptr){
-        CreateAndStartTimer(current_alarm_->time - now);
-    }
-    
+    // 调度最近的闹钟
+    ScheduleNextAlarm(now);
+    // 锁外异步回写被顺延过的云端闹钟
+    SyncAlarmsToCloudAsync(std::move(pending));
+
     return sync_result;
 }
 
 void AlarmManager::CreateAndStartTimer(int delay) {
+    if (timer_ == nullptr) {
+        ESP_LOGW(TAG, "Timer not created, skip start");
+        return;
+    }
     if (delay <= 0) {
         ESP_LOGW(TAG, "Invalid timer interval: %d sec, skip start", delay);
         return;
     }
     esp_timer_stop(timer_); // 先停止之前的任务
     ESP_LOGI(TAG, "Start timer, trigger in %d sec", delay);
-    ESP_ERROR_CHECK(esp_timer_start_once(timer_, delay * 1000000));
+    // 用 64 位运算避免 delay 较大时乘法溢出
+    esp_err_t err = esp_timer_start_once(timer_, (uint64_t)delay * 1000000ULL);
+    if (err != ESP_OK) {
+        // 启动失败不应让整机 abort，记录后由后续调度重试
+        ESP_LOGE(TAG, "Failed to start alarm timer: %s", esp_err_to_name(err));
+    }
 }
 
 void AlarmManager::OnAlarm(){
     time_t now = time(NULL);
-    // 获取最接近的闹钟
-    Alarm *alarm_first = nullptr;
-    for(auto& alarm : alarms_){
-        if(alarm.time <= now){
-            alarm_first = &alarm;
-            break;
+    // 持锁查找到期闹钟并生成提醒文本（ClearOverdueAlarm 可能删除元素，因此不能持有裸指针跨锁使用）
+    std::string ring_text;
+    bool found = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for(const auto& alarm : alarms_){
+            if(alarm.time <= now){
+                ring_text = alarm.name + " " + FormatTimestamp(alarm.time);
+                found = true;
+                break;
+            }
+        }
+        if (found) {
+            ring_name_ = ring_text;
         }
     }
-    if (alarm_first == nullptr) {
+    if (!found) {
         ESP_LOGI(TAG, "OnAlarm triggered but no valid alarm due");
         ring_flag_ = false;
         return;
@@ -120,16 +189,24 @@ void AlarmManager::OnAlarm(){
     // 有闹钟要提醒
     ESP_LOGI(TAG, "=----ring----=");
     ring_flag_ = true;
-    // 构造闹钟提醒文本
-    ring_name_ = alarm_first->name + " " + FormatTimestamp(alarm_first->time);
-    ESP_LOGI(TAG, "Alarm: %s is ringing", alarm_first->name.c_str());
-    
+    ESP_LOGI(TAG, "Alarm: %s is ringing", ring_text.c_str());
+
     // 清除过期的闹钟
     ClearOverdueAlarm(now);
     // 调度下一个闹钟
-    Alarm *next_alarm_ = GetProximateAlarm(now);
-    if (next_alarm_ != nullptr){
-        CreateAndStartTimer(next_alarm_->time - now);
+    ScheduleNextAlarm(now);
+}
+
+void AlarmManager::ScheduleNextAlarm(time_t now){
+    std::lock_guard<std::mutex> lock(mutex_);
+    ScheduleNextAlarmLocked(now);
+}
+
+void AlarmManager::ScheduleNextAlarmLocked(time_t now){
+    Alarm *next_alarm = GetProximateAlarm(now);
+    if (next_alarm != nullptr){
+        ESP_LOGI(TAG, "Next Alarm %d %s set at %s repeat %d interval %d", next_alarm->id, next_alarm->name.c_str(), FormatTimestamp(next_alarm->time).c_str(), next_alarm->repeat, next_alarm->interval);
+        CreateAndStartTimer(next_alarm->time - now);
     } else {
         ESP_LOGI(TAG, "no alarm now");
     }
@@ -146,55 +223,89 @@ Alarm * AlarmManager::GetProximateAlarm(time_t now){
 }
 
 void AlarmManager::ClearOverdueAlarm(time_t now){
-    std::lock_guard<std::mutex> lock(mutex_);
-    Settings settings_("alarm_clock", true); // 闹钟设置(硬盘存储)
-    // 如果有repeat，则更新 alarm_first 和 settings，否则删除
-    for (auto it = alarms_.begin(); it != alarms_.end();){
-        // 未到期的
-        if (it->time > now){
-            ++it;
-            continue;
-        }
-        // 到期处理：在 0-9 范围内寻找
-        bool found = false;
-        for (int i = 0; i < max_alarms_; i++){
-            if(settings_.GetString("alarm_" + std::to_string(i)) == it->name && settings_.GetInt("alarm_time_" + std::to_string(i)) == it->time){
-                found = true;
-                it->repeat--; // 次数减去1
-                if (it->repeat > 0) {
-                    it->time += it->interval;
-                    settings_.SetInt("alarm_time_" + std::to_string(i), it->time);
-                    settings_.SetInt("alarm_rpt_" + std::to_string(i), it->repeat);
-                    std::string result = SyncAlarmToCloud(*it, "update");
-                    ESP_LOGI(TAG, "Alarm %s will repeat %d, sync to cloud: %s", it->name.c_str(), it->repeat, result.c_str());
-                    ++it;
-                } else {
-                    settings_.SetString("alarm_" + std::to_string(i), ""); // 名称置为空
-                    settings_.SetInt("alarm_time_" + std::to_string(i), 0);
-                    settings_.SetInt("alarm_rpt_" + std::to_string(i), 0);
-                    settings_.SetInt("alarm_itv_" + std::to_string(i), 0);
-                    std::string result = SyncAlarmToCloud(*it, "delete");
-                    ESP_LOGI(TAG, "Alarm %s is overdue, repeat %d, sync to cloud: %s", it->name.c_str(), it->repeat, result.c_str());
-                    it = alarms_.erase(it); // 删除过期的闹钟, 此时it指向下一个元素
+    // 本函数可能运行在 esp_timer 任务上（OnAlarm 触发），该任务栈很小且为全系统共享，
+    // 因此锁内只做内存与 NVS 操作，网络同步收集后在锁外交给独立任务执行。
+    std::vector<std::pair<Alarm, std::string>> pending;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        Settings settings_("alarm_clock", true); // 闹钟设置(硬盘存储)
+        // 如果有repeat，则更新 alarm_first 和 settings，否则删除
+        for (auto it = alarms_.begin(); it != alarms_.end();){
+            // 未到期的
+            if (it->time > now){
+                ++it;
+                continue;
+            }
+            // 到期处理：在 0-9 范围内寻找
+            bool found = false;
+            for (int i = 0; i < max_alarms_; i++){
+                if(settings_.GetString("alarm_" + std::to_string(i)) == it->name && settings_.GetInt("alarm_time_" + std::to_string(i)) == it->time){
+                    found = true;
+                    it->repeat--; // 次数减去1
+                    if (it->repeat > 0) {
+                        it->time += it->interval;
+                        settings_.SetInt("alarm_time_" + std::to_string(i), it->time);
+                        settings_.SetInt("alarm_rpt_" + std::to_string(i), it->repeat);
+                        ESP_LOGI(TAG, "Alarm %s will repeat %d, queue cloud update", it->name.c_str(), it->repeat);
+                        pending.emplace_back(*it, "update");
+                        ++it;
+                    } else {
+                        settings_.SetString("alarm_" + std::to_string(i), ""); // 名称置为空
+                        settings_.SetInt("alarm_time_" + std::to_string(i), 0);
+                        settings_.SetInt("alarm_rpt_" + std::to_string(i), 0);
+                        settings_.SetInt("alarm_itv_" + std::to_string(i), 0);
+                        ESP_LOGI(TAG, "Alarm %s is overdue, repeat %d, queue cloud delete", it->name.c_str(), it->repeat);
+                        pending.emplace_back(*it, "delete");
+                        it = alarms_.erase(it); // 删除过期的闹钟, 此时it指向下一个元素
+                    }
+                    break; // 命中，跳出for循环
                 }
-                break; // 命中，跳出for循环
+            }
+            if (!found) {
+                ESP_LOGI(TAG, "Alarm %s not found in settings, skipping", it->name.c_str());
+                ++it;
             }
         }
-        if (!found) {
-            ESP_LOGI(TAG, "Alarm %s not found in settings, skipping", it->name.c_str());
-            ++it;
+        // 如果所有闹钟都过期了，停止定时器
+        if (alarms_.empty() && timer_) {
+            esp_timer_stop(timer_);
+            ESP_LOGI(TAG, "All alarms overdue, timer stopped");
         }
     }
-    // 如果所有闹钟都过期了，停止定时器
-    if (alarms_.empty() && timer_) {
-        esp_timer_stop(timer_);
-        ESP_LOGI(TAG, "All alarms overdue, timer stopped");
+    // 锁外异步同步，定时器回调可以立即返回
+    SyncAlarmsToCloudAsync(std::move(pending));
+}
+
+void AlarmManager::SyncAlarmsToCloudAsync(std::vector<std::pair<Alarm, std::string>> pending) {
+    if (pending.empty()) {
+        return;
+    }
+    struct SyncContext {
+        AlarmManager* manager;
+        std::vector<std::pair<Alarm, std::string>> items;
+    };
+    auto* ctx = new (std::nothrow) SyncContext{this, std::move(pending)};
+    if (ctx == nullptr) {
+        ESP_LOGE(TAG, "Failed to allocate alarm sync context");
+        return;
+    }
+    auto task = [](void* arg) {
+        auto* ctx = static_cast<SyncContext*>(arg);
+        for (const auto& item : ctx->items) {
+            std::string result = ctx->manager->SyncAlarmToCloud(item.first, item.second);
+            ESP_LOGI(TAG, "Async sync alarm %s (%s): %s", item.first.name.c_str(), item.second.c_str(),
+                     result.empty() ? "success" : result.c_str());
+        }
+        delete ctx;
+        vTaskDelete(nullptr);
+    };
+    if (xTaskCreate(task, "alarm_cloud_sync", 6144, ctx, 1, nullptr) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create alarm cloud sync task");
+        delete ctx;
     }
 }
 
 std::string AlarmManager::SetAlarm(int delay, int hour, int minute, int repeat, int interval, std::string name){
-    std::lock_guard<std::mutex> lock(mutex_);
-    Settings settings_("alarm_clock", true); // 闹钟设置
     // 开始设置新闹钟
     Alarm alarm{}; // 一个新的闹钟，全部初始化为0，Alarm alarm则不会初始化，会拿到一个随机值
     // 计算 time
@@ -221,116 +332,68 @@ std::string AlarmManager::SetAlarm(int delay, int hour, int minute, int repeat, 
     alarm.name = name;
     alarm.repeat = repeat;
     alarm.interval = interval;
-    // 从设置里面找到第一个空闲的闹钟, 记录新的闹钟
-    for (int i = 0; i < max_alarms_; i++) {
-        if(settings_.GetString("alarm_" + std::to_string(i)) == ""){
-            alarm.id = i; // 将索引赋值给闹钟的id
-            break;
+
+    // 1.持锁占位：立刻写入槽位名称，避免释放锁做网络时被并发的 SetAlarm 抢占同一 id
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        Settings settings_("alarm_clock", true); // 闹钟设置
+        bool slot_found = false;
+        for (int i = 0; i < max_alarms_; i++) {
+            if(settings_.GetString("alarm_" + std::to_string(i)) == ""){
+                alarm.id = i; // 将索引赋值给闹钟的id
+                slot_found = true;
+                break;
+            }
         }
+        if (!slot_found) {
+            ESP_LOGW(TAG, "No free alarm slot available");
+            return "No free alarm slot available";
+        }
+        settings_.SetString("alarm_" + std::to_string(alarm.id), alarm.name);
     }
-    // 1.先同步到云端，失败则返回
+
+    // 2.锁外同步到云端，失败则释放占位并返回（网络操作绝不能持锁，否则会拖住定时器等其它任务）
     std::string result = SyncAlarmToCloud(alarm, "add");
     if (!result.empty()) {
         ESP_LOGI(TAG, "Alarm %s sync to cloud: %s", alarm.name.c_str(), result.c_str());
+        std::lock_guard<std::mutex> lock(mutex_);
+        Settings settings_("alarm_clock", true);
+        settings_.SetString("alarm_" + std::to_string(alarm.id), "");
         return result;
     }
-    // 2.保存到nvs
-    settings_.SetString("alarm_" + std::to_string(alarm.id), alarm.name);
-    settings_.SetInt("alarm_time_" + std::to_string(alarm.id), alarm.time);
-    settings_.SetInt("alarm_rpt_" + std::to_string(alarm.id), repeat);
-    settings_.SetInt("alarm_itv_" + std::to_string(alarm.id), interval);
-    alarms_.push_back(alarm); // 全部赋值后再push_back
-    ESP_LOGI(TAG, "Alarm %d %s set at %s repeat %d interval %d", alarm.id, alarm.name.c_str(), FormatTimestamp(alarm.time).c_str(), alarm.repeat, alarm.interval);
-    // 打印所有闹钟设置用于调试
-    ESP_LOGI(TAG, "=== Alarm Settings Debug Info ===");
-    for(int i = 0; i < max_alarms_; i++){
-        std::string name = settings_.GetString("alarm_" + std::to_string(i));
-        int time = settings_.GetInt("alarm_time_" + std::to_string(i));
-        int repeat = settings_.GetInt("alarm_rpt_" + std::to_string(i));
-        int interval = settings_.GetInt("alarm_itv_" + std::to_string(i));
-        if(name != ""){
-            ESP_LOGI(TAG, "Alarm %d: name=%s, time=%d, repeat=%d, interval=%d", i, name.c_str(), time, repeat, interval);
-        }
-    }
-    // 获取下一个要启动的闹钟
-    Alarm *alarm_first = GetProximateAlarm(now);
-    if (alarm_first != nullptr) {
-        ESP_LOGI(TAG, "Next Alarm %d %s set at %s repeat %d interval %d", alarm_first->id, alarm_first->name.c_str(), FormatTimestamp(alarm_first->time).c_str(), alarm_first->repeat, alarm_first->interval);
-        CreateAndStartTimer(alarm_first->time - now);
+
+    // 3.重新持锁保存到nvs并调度定时器
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        Settings settings_("alarm_clock", true); // 闹钟设置
+        settings_.SetInt("alarm_time_" + std::to_string(alarm.id), alarm.time);
+        settings_.SetInt("alarm_rpt_" + std::to_string(alarm.id), repeat);
+        settings_.SetInt("alarm_itv_" + std::to_string(alarm.id), interval);
+        alarms_.push_back(alarm); // 全部赋值后再push_back
+        ESP_LOGI(TAG, "Alarm %d %s set at %s repeat %d interval %d", alarm.id, alarm.name.c_str(), FormatTimestamp(alarm.time).c_str(), alarm.repeat, alarm.interval);
+        // 获取下一个要启动的闹钟
+        ScheduleNextAlarmLocked(now);
     }
     return ""; // 返回空字符串表示成功
 }
 
-std::string AlarmManager::DelAlarm(std::string keyword){
-    std::lock_guard<std::mutex> lock(mutex_);
-    Settings settings_("alarm_clock", true); // 闹钟设置
-
-    if (keyword.empty()) {
-        ESP_LOGI(TAG, "Keyword cannot be empty");
-        return "Keyword cannot be empty";
-    }
-
-    // 从alarms_中删除包含关键词的闹钟
-    bool found = false;
-    for(auto it = alarms_.begin(); it != alarms_.end(); ++it){
-        if(it->name.find(keyword) != std::string::npos){
-            ESP_LOGI(TAG, "Alarm %d %s deleted", it->id, it->name.c_str());
-            alarms_.erase(it);
-            found = true;
-            break;
-        }
-    }
-    
-    if(!found){
-        ESP_LOGW(TAG, "Alarm %s not found", keyword.c_str());
-        return "Alarm not found";
-    }
-    
-    // 从设置中删除指定名称的闹钟
-    for(int i = 0; i < max_alarms_; i++){
-        if(settings_.GetString("alarm_" + std::to_string(i)).find(keyword) != std::string::npos){
-            settings_.SetString("alarm_" + std::to_string(i), "");
-            settings_.SetInt("alarm_time_" + std::to_string(i), 0);
-            settings_.SetInt("alarm_rpt_" + std::to_string(i), 0);
-            settings_.SetInt("alarm_itv_" + std::to_string(i), 0);
-            break;
-        }
-    }
-    
-    ESP_LOGI(TAG, "Alarm %s deleted", keyword.c_str());
-
-    // 重新设置下一个闹钟
-    time_t now = time(NULL);
-    Alarm *current_alarm_ = GetProximateAlarm(now);
-    if (current_alarm_ != nullptr) {
-        CreateAndStartTimer(current_alarm_->time - now);
-    } else {
-        ESP_LOGI(TAG, "No more alarms");
-    }
-    return "";
-}
-
 std::string AlarmManager::DelAlarmById(int id){
-    std::lock_guard<std::mutex> lock(mutex_);
-    Settings settings_("alarm_clock", true); // 闹钟设置
-
     if (id < 0) {
         ESP_LOGI(TAG, "id should be >= 0");
         return "id should be >= 0";
     }
 
-    // 从alarms_中删除闹钟
+    // 1.持锁找到目标闹钟并拷贝出来（此时不修改列表，云端失败时无需回滚）
+    Alarm target{};
     bool found = false;
-    for(auto it = alarms_.begin(); it != alarms_.end(); ++it){
-        if(it->id == id){
-            ESP_LOGI(TAG, "Alarm %d %s deleted", it->id, it->name.c_str());
-            std::string result = SyncAlarmToCloud(*it, "delete");
-            if (!result.empty()) {
-                return result;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for(const auto& alarm : alarms_){
+            if(alarm.id == id){
+                target = alarm;
+                found = true;
+                break;
             }
-            it = alarms_.erase(it); // 返回指向被删除元素后一个元素的迭代器
-            found = true;
-            break;
         }
     }
     
@@ -339,21 +402,33 @@ std::string AlarmManager::DelAlarmById(int id){
         return "Alarm not found";
     }
     
-    // 从设置中删除指定名称的闹钟
-    settings_.SetString("alarm_" + std::to_string(id), "");
-    settings_.SetInt("alarm_time_" + std::to_string(id), 0);
-    settings_.SetInt("alarm_rpt_" + std::to_string(id), 0);
-    settings_.SetInt("alarm_itv_" + std::to_string(id), 0);
-    
-    ESP_LOGI(TAG, "Alarm %d deleted from nvs", id);
+    // 2.锁外同步到云端
+    std::string result = SyncAlarmToCloud(target, "delete");
+    if (!result.empty()) {
+        return result;
+    }
 
-    // 重新设置下一个闹钟
-    time_t now = time(NULL);
-    Alarm *current_alarm_ = GetProximateAlarm(now);
-    if (current_alarm_ != nullptr) {
-        CreateAndStartTimer(current_alarm_->time - now);
-    } else {
-        ESP_LOGI(TAG, "No more alarms");
+    // 3.重新持锁删除本地记录并调度定时器
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        Settings settings_("alarm_clock", true); // 闹钟设置
+        for(auto it = alarms_.begin(); it != alarms_.end(); ++it){
+            if(it->id == id){
+                ESP_LOGI(TAG, "Alarm %d %s deleted", it->id, it->name.c_str());
+                alarms_.erase(it);
+                break;
+            }
+        }
+        // 从设置中删除指定名称的闹钟
+        settings_.SetString("alarm_" + std::to_string(id), "");
+        settings_.SetInt("alarm_time_" + std::to_string(id), 0);
+        settings_.SetInt("alarm_rpt_" + std::to_string(id), 0);
+        settings_.SetInt("alarm_itv_" + std::to_string(id), 0);
+
+        ESP_LOGI(TAG, "Alarm %d deleted from nvs", id);
+
+        // 重新设置下一个闹钟
+        ScheduleNextAlarmLocked(time(NULL));
     }
     return "";
 }
@@ -385,13 +460,13 @@ void AlarmManager::ClearRing(){
 };
 
 std::string AlarmManager::CleanUpAlarm() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    Settings settings_("alarm_clock", true); // 闹钟设置
-    // 清空所有闹钟：先清除云端的，再清除本地的
+    // 清空所有闹钟：先清除云端的（锁外，避免网络阻塞持锁），再清除本地的
     std::string result = ClearCloudAlarms();
     if (!result.empty()) {
         return result;
     }
+    std::lock_guard<std::mutex> lock(mutex_);
+    Settings settings_("alarm_clock", true); // 闹钟设置
     alarms_.clear();
     // 清空所有设置
     for(int i = 0; i < max_alarms_; i++){
@@ -401,7 +476,9 @@ std::string AlarmManager::CleanUpAlarm() {
         settings_.SetInt("alarm_itv_" + std::to_string(i), 0);
     }
     // 停止当前定时器
-    esp_timer_stop(timer_);
+    if (timer_) {
+        esp_timer_stop(timer_);
+    }
     ESP_LOGI(TAG, "All alarms cleaned up");
     return "";
 }
@@ -410,6 +487,7 @@ std::string AlarmManager::SyncAlarmToCloud(const Alarm& alarm, const std::string
     // 创建HTTP客户端
     auto http = Board::GetInstance().GetNetwork()->CreateHttp();
     
+    http->SetTimeout(ALARM_HTTP_TIMEOUT_MS); // 服务端异常时快速失败
     http->SetHeader("Content-Type", "application/json");
     http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
     
@@ -460,6 +538,7 @@ std::string AlarmManager::ClearCloudAlarms() {
     // 创建HTTP客户端
     auto http = Board::GetInstance().GetNetwork()->CreateHttp();
     
+    http->SetTimeout(ALARM_HTTP_TIMEOUT_MS); // 服务端异常时快速失败
     http->SetHeader("Content-Type", "application/json");
     http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
     
@@ -498,29 +577,34 @@ std::string AlarmManager::ClearCloudAlarms() {
     return "";
 }
 
-std::string AlarmManager::SyncAlarmFromCloud() {
+std::string AlarmManager::SyncAlarmFromCloud(std::vector<Alarm>& out_alarms,
+                                             std::vector<std::pair<Alarm, std::string>>& out_pending) {
+    out_alarms.clear();
+    out_pending.clear();
+
     // 创建HTTP客户端
     auto http = Board::GetInstance().GetNetwork()->CreateHttp();
-    
+
+    http->SetTimeout(ALARM_HTTP_TIMEOUT_MS); // 服务端异常时快速失败
     http->SetHeader("Content-Type", "application/json");
     http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
-    
+
     // 发送GET请求
     if (!http->Open("GET", server_url_.c_str())) {
         ESP_LOGE(TAG, "Failed to connect to alarm sync server");
         http->Close();
         return "Failed to connect to alarm sync server";
     }
-    
+
     int status_code = http->GetStatusCode();
     std::string response = http->ReadAll();
-    cJSON* root = cJSON_Parse(response.c_str());
     http->Close();
+    cJSON* root = cJSON_Parse(response.c_str());
     if (status_code != 200) {
         ESP_LOGE(TAG, "Failed to fetch alarms from cloud, status code: %d", status_code);
         if (root) {
             cJSON *msg = cJSON_GetObjectItem(root, "msg");
-            std::string error_msg = msg ? msg->valuestring : "Unknown error"; 
+            std::string error_msg = cJSON_IsString(msg) ? msg->valuestring : "Unknown error";
             cJSON_Delete(root);
             return error_msg; //返回具体错误信息
         }
@@ -531,15 +615,6 @@ std::string AlarmManager::SyncAlarmFromCloud() {
         return "Failed to get alarm sync response";
     }
     cJSON* alarms_array = cJSON_GetObjectItem(root, "data");
-    // 从云端响应中加载闹钟
-    Settings settings_("alarm_clock", true); // 闹钟设置
-    // 先清空所有设置
-    for(int i = 0; i < max_alarms_; i++){
-        settings_.SetString("alarm_" + std::to_string(i), "");
-        settings_.SetInt("alarm_time_" + std::to_string(i), 0);
-        settings_.SetInt("alarm_rpt_" + std::to_string(i), 0);
-        settings_.SetInt("alarm_itv_" + std::to_string(i), 0);
-    }
     if (!alarms_array || !cJSON_IsArray(alarms_array)) {
         ESP_LOGW(TAG, "No alarms in response or invalid format");
         cJSON_Delete(root);
@@ -549,17 +624,29 @@ std::string AlarmManager::SyncAlarmFromCloud() {
     for (int i = 0; i < alarm_count; i++) {
         cJSON* alarm_json = cJSON_GetArrayItem(alarms_array, i);
         if (!alarm_json) continue;
-        Alarm alarm{};
         cJSON* id_item = cJSON_GetObjectItem(alarm_json, "nvs_id");
         cJSON* time_item = cJSON_GetObjectItem(alarm_json, "time");
         cJSON* repeat_item = cJSON_GetObjectItem(alarm_json, "repeat");
         cJSON* interval_item = cJSON_GetObjectItem(alarm_json, "interval");
         cJSON* name_item = cJSON_GetObjectItem(alarm_json, "name");
+        // 校验字段，避免服务端返回异常数据时空指针解引用
+        if (!cJSON_IsNumber(id_item) || !cJSON_IsNumber(time_item) ||
+            !cJSON_IsNumber(repeat_item) || !cJSON_IsNumber(interval_item) ||
+            !cJSON_IsString(name_item) || name_item->valuestring == nullptr) {
+            ESP_LOGW(TAG, "Invalid alarm entry at index %d, skipping", i);
+            continue;
+        }
+        Alarm alarm{};
         alarm.id = id_item->valueint;
         alarm.time = time_item->valueint;
         alarm.repeat = repeat_item->valueint;
         alarm.interval = interval_item->valueint;
         alarm.name = std::string(name_item->valuestring);
+        // 槽位越界会写坏 NVS 键空间，直接跳过
+        if (alarm.id < 0 || alarm.id >= max_alarms_) {
+            ESP_LOGW(TAG, "Alarm nvs_id %d out of range, skipping", alarm.id);
+            continue;
+        }
         // 检查云端下发的闹钟时间是否已过期，如果是重复闹钟则顺延到未来
         time_t now = time(NULL);
         bool time_adjusted = false;
@@ -574,21 +661,14 @@ std::string AlarmManager::SyncAlarmFromCloud() {
                 continue;
             }
         }
-        alarms_.push_back(alarm);
-        // 保存到本地设置
-        settings_.SetString("alarm_" + std::to_string(alarm.id), alarm.name);
-        settings_.SetInt("alarm_time_" + std::to_string(alarm.id), alarm.time);
-        settings_.SetInt("alarm_rpt_" + std::to_string(alarm.id), alarm.repeat);
-        settings_.SetInt("alarm_itv_" + std::to_string(alarm.id), alarm.interval);
-        // 如果时间被调整过，同步到云端
+        out_alarms.push_back(alarm);
+        // 如果时间被调整过，交由调用方在锁外异步回写云端
         if (time_adjusted) {
-            std::string sync_result = SyncAlarmToCloud(alarm, "update");
-            ESP_LOGI(TAG, "Sync adjusted alarm to cloud: %s", sync_result.empty() ? "success" : sync_result.c_str());
+            out_pending.emplace_back(alarm, "update");
         }
-        ESP_LOGI(TAG, "Loaded alarm from cloud: %s %s", alarm.name.c_str(), FormatTimestamp(alarm.time).c_str());
     }
     cJSON_Delete(root);
-    ESP_LOGI(TAG, "Successfully loaded %d alarms from cloud", alarm_count);
+    ESP_LOGI(TAG, "Successfully loaded %d alarms from cloud", (int)out_alarms.size());
     return "";
 }
 

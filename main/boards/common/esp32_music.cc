@@ -118,8 +118,8 @@ std::string Esp32Music::SinglePlay(const std::string& song_name, const std::stri
         }
         return "音乐服务器响应失败";
     }
-    ESP_LOGI(TAG, "Music API GET Status = %d, content_length = %d", status_code, response.length());
-    ESP_LOGI(TAG, "Music API raw response: %s", response.c_str());
+    // ESP_LOGI(TAG, "Music API GET Status = %d, content_length = %d", status_code, response.length());
+    // ESP_LOGI(TAG, "Music API raw response: %s", response.c_str());  // 调试用：生产环境避免打印完整响应体
     if (!response.empty()) {
         // 解析响应JSON以提取音频URL
         cJSON* response_json = cJSON_Parse(response.c_str());
@@ -148,7 +148,7 @@ std::string Esp32Music::SinglePlay(const std::string& song_name, const std::stri
             
             // 检查audio_url是否有效
             if (cJSON_IsString(audio_url) && audio_url->valuestring && strlen(audio_url->valuestring) > 0) {
-                ESP_LOGI(TAG, "Resolved audio_url: %s", audio_url->valuestring);
+                // ESP_LOGI(TAG, "Resolved audio_url: %s", audio_url->valuestring);
                 current_music_url_ = audio_url->valuestring;
                 current_song_id_ = song_id ? song_id->valueint : 0; 
                 song_name_displayed_ = false;  // 重置歌名显示标志

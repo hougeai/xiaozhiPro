@@ -39,6 +39,7 @@ private:
     int refresh_interval_ = 15; // 默认刷新间隔
     int idle_counter_ = 0;
     bool idle_info_loaded_ = false; // 标记是否已加载待机信息
+    bool idle_info_loading_ = false; // 标记是否正在异步加载待机信息
     ScreenType screen_type_ = SCREEN_128X64; // 屏幕类型
 
     virtual bool Lock(int timeout_ms = 0) override;
@@ -60,6 +61,7 @@ public:
     void ShowIdleInfo();
     void HideIdleInfo();
     void LoadIdleInfoSettings(); // 加载设置
+    void LoadIdleInfoSettingsAsync(); // 异步加载设置，避免阻塞主任务
     const char* GetBatteryText(int battery_level, bool charging);
     void SetLabelScrollSpeed(lv_obj_t* label, int px_per_sec);
 };

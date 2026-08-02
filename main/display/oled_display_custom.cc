@@ -538,10 +538,9 @@ const char* CustomOledDisplay::GetBatteryText(int battery_level, bool charging) 
 void CustomOledDisplay::ShowIdleInfo() {   
     DisplayLockGuard lock(this);
 
-    // 第一次显示待机信息时加载设置
-    if (!idle_info_loaded_) {
-        LoadIdleInfoSettings();
-        idle_info_loaded_ = true;
+    // 第一次显示待机信息时异步加载设置，避免阻塞主任务（服务器响应慢/超时会拖垮唤醒与状态机）
+    if (!idle_info_loaded_ && !idle_info_loading_) {
+        LoadIdleInfoSettingsAsync();
     }
     // 先隐藏所有标签
     for (int i = 0; i < 8; i++) {
@@ -646,6 +645,26 @@ void CustomOledDisplay::HideIdleInfo() {
             lv_obj_remove_flag(chat_message_label_, LV_OBJ_FLAG_HIDDEN);
         }
     }
+}
+
+void CustomOledDisplay::LoadIdleInfoSettingsAsync() {
+    idle_info_loading_ = true;
+    // 在独立任务中执行阻塞式 HTTPS 请求，避免拖垮 Application 主任务（唤醒/状态机/MQTT）
+    xTaskCreate(
+        [](void* arg) {
+            auto* display = static_cast<CustomOledDisplay*>(arg);
+            // 阻塞加载（可能耗时/超时），运行在非主任务上下文中
+            display->LoadIdleInfoSettings();
+            // 回到主任务上下文完成状态切换与刷新，保证对 idle_info_texts_ 的访问线程安全
+            Application::GetInstance().Schedule([display]() {
+                display->idle_info_loading_ = false;
+                display->idle_info_loaded_ = true;
+                display->idle_counter_ = 0;
+                display->ShowIdleInfo();
+            });
+            vTaskDelete(nullptr);
+        },
+        "idle_info_loader", 8192, this, 1, nullptr);
 }
 
 void CustomOledDisplay::LoadIdleInfoSettings() {
