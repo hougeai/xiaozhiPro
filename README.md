@@ -106,12 +106,12 @@
 ![小智Pro个人版反馈](qrcode.webp)
 
 ## 更新日志 📅
+
 ### 2026.07.30
 
 > 【小智Pro】设备端升级
 
 - 适配小智最新固件版本v2.4.0，支持所有官方仓库开发板型号
-  - 固件下载请移步：<a :href="theme.nav[2].link" target="_blank">{{theme.nav[2].link}}</a>
 - 音乐播放 / 闹钟提醒异步调用
 - 新增 MCP 工具 `self.music.list`：查询用户已上传的音乐列表
 - 修复部分开发板在 ESP-IDF v6.0.2 下的兼容性问题
@@ -123,7 +123,7 @@
   - 支持 PDF/Word/PPT/Excel/HTML/图片/TXT/Markdown 多种格式，URL 自动抓取清洗
   - 文档树视图查看层级结构与节点摘要
   - 异步检索，避免设备连接超时
-  - 详见 [推理知识库](/cn/user/kb-treerag)
+  - 详见 [推理知识库](https://mkwyqeoebedx.sealosbja.site/docs/cn/user/kb-treerag)
 - 音乐功能调整：移除公网音乐搜索，仅支持用户自行上传音乐
 
 ### 2026.06.20
@@ -140,7 +140,6 @@
 > 【小智Pro】固件适配 v2.2.6
 
 - 适配小智最新固件版本v2.2.6，支持所有官方仓库开发板型号
-  - 固件下载请移步：https://github.com/hougeai/xiaozhiPro/releases
 
 > 【小智Pro】服务端升级（设备端固件要求：v2.2.6.1 以上）
   
