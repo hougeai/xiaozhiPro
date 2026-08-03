@@ -5,7 +5,6 @@
 #include <esp_lvgl_port.h>
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
-#include <font_emoji.h>
 
 #include <atomic>
 #include <memory>

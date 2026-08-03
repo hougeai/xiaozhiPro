@@ -17,8 +17,13 @@
 #include <esp_lcd_panel_ops.h>
 
 #include "power_save_timer.h"
-#include "../zhengchen-1.54tft-wifi/power_manager.h"
+#include "../1.54tft-wifi/power_manager.h"
+// The legacy touch_pad API is deprecated in ESP-IDF 6.x but still functional.
+// Suppress the deprecation warning (treated as error under -Werror) for this include only.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcpp"
 #include "driver/touch_pad.h"
+#pragma GCC diagnostic pop
 
 // 如果240屏幕，用esp_lcd_gc9a01定义在components
 #if CONFIG_USE_LCD_240X240_GIF
@@ -212,7 +217,7 @@ private:
         // 液晶屏控制IO初始化
         ESP_LOGD(TAG, "Install panel IO");
         esp_lcd_panel_io_spi_config_t io_config = {};
-        io_config.cs_gpio_num = -1;
+        io_config.cs_gpio_num = GPIO_NUM_NC;
         io_config.dc_gpio_num = DISPLAY_DC;
         io_config.spi_mode = 0;
         io_config.pclk_hz = 40 * 1000 * 1000;

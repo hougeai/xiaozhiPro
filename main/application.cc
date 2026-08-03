@@ -770,6 +770,14 @@ void Application::HandleToggleChatEvent() {
         audio_service_.EnableAudioTesting(false);
         SetDeviceState(kDeviceStateWifiConfiguring);
         return;
+    } else if (state == kDeviceStateAlarm) {
+        // 无唤醒词的板子（如 ESP32-C3）没有唤醒词关闭闹钟的路径，
+        // 用按键切换（单击）直接关闭闹钟并返回空闲状态。
+        if (alarm_m_ != nullptr) {
+            alarm_m_->ClearRing();
+        }
+        SetDeviceState(kDeviceStateIdle);
+        return;
     }
 
     if (!protocol_) {
