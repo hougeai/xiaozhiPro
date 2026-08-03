@@ -982,6 +982,55 @@ void McpServer::AddCommonTools() {
             return result;
         });
     // music
+    AddTool("self.music.list",
+        "查看上传的音乐列表时使用此工具，返回该用户已上传的歌曲清单。\n"
+        "返回:\n"
+        "  用户上传的音乐列表（每行一首，格式为 歌手-歌名）。",
+        PropertyList(),
+        [&board](const PropertyList& properties) -> ReturnValue {
+            auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
+            http->SetHeader("Content-Type", "application/json");
+            http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
+            http->SetTimeout(5000); // 设置超时时间
+            std::string base_url = std::string(CONFIG_SERVER_URL) + "/device_music_list";
+
+            if (!http->Open("GET", base_url)) {
+                ESP_LOGE(TAG, "Failed to connect to music list API");
+                return R"({"success":false,"message":"Failed to connect to the server"})";
+            }
+
+            int status_code = http->GetStatusCode();
+            std::string response = http->ReadAll();
+            cJSON* root = cJSON_Parse(response.c_str());
+            http->Close();
+            if (status_code != 200 || root == nullptr) {
+                std::string msg = "Failed to get music list";
+                if (root) {
+                    cJSON* m = cJSON_GetObjectItem(root, "msg");
+                    if (cJSON_IsString(m)) msg = m->valuestring;
+                    cJSON_Delete(root);
+                }
+                ESP_LOGE(TAG, "Get music list failed: %s", msg.c_str());
+                return std::string(R"({"success":false,"message":")") + msg + R"("})";
+            }
+
+            cJSON* data_item = cJSON_GetObjectItem(root, "data");
+            if (!data_item || !cJSON_IsString(data_item)) {
+                cJSON_Delete(root);
+                return R"({"success":false,"message":"Empty"})";
+            }
+            std::string data_str = data_item->valuestring;
+            cJSON_Delete(root);
+            // 直接把服务端返回的列表字符串透传给调用方
+            cJSON* result = cJSON_CreateObject();
+            cJSON_AddStringToObject(result, "data", data_str.c_str());
+            cJSON_AddBoolToObject(result, "success", true);
+            char* result_json = cJSON_PrintUnformatted(result);
+            std::string result_str(result_json);
+            cJSON_free(result_json);
+            cJSON_Delete(result);
+            return result_str;
+        });
     AddTool("self.music.play",
         "当用户要求播放音乐时使用此工具，会自动获取歌曲详情并开始流式播放。\n"
         "示例: \n"
