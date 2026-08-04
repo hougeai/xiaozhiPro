@@ -354,6 +354,12 @@ void Application::HandleActivationDoneEvent() {
     if (has_server_time_) {
         ESP_LOGI(TAG, "Server time synchronized, start alarm manager");
         alarm_m_ = new AlarmManager();
+        // 延后启动首次云端同步：避免在激活/唤醒词初始化并发窗口内抢占 RSA 硬件，待 main 任务回到空闲后再由主循环调度执行。
+        Schedule([this]() {
+            if (alarm_m_ != nullptr) {
+                alarm_m_->StartReloadTask();
+            }
+        });
     } else {
         ESP_LOGI(TAG, "Server time not synchronized, alarm manager disabled");
         alarm_m_ = nullptr;

@@ -126,6 +126,10 @@ void McpServer::AddCommonTools() {
 #endif
     
     // led
+    // GpioLed is not compiled for CONFIG_IDF_TARGET_ESP32 (gpio_led.cc is
+    // removed from SOURCES in CMakeLists.txt), so guard the reference to avoid
+    // an undefined-reference link error on ESP32 builds.
+#if !defined(CONFIG_IDF_TARGET_ESP32)
     auto led = board.GetManualLed();
     auto gpio_led = dynamic_cast<GpioLed*>(led);
     if (gpio_led) {
@@ -155,6 +159,7 @@ void McpServer::AddCommonTools() {
                 return true;
             });
     }
+#endif  // !defined(CONFIG_IDF_TARGET_ESP32)
     // alarm
     AddTool("self.alarm.set",
         "为用户添加各种闹钟提醒功能，比如：帮我定一个10分钟的闹钟；20秒后提醒我关煤气炉；每天下午2点提醒我吃药"

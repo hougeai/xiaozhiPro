@@ -39,17 +39,21 @@ def get_project_version() -> Optional[str]:
     return None
 
 
-def merge_bin() -> None:
+def merge_bin() -> bool:
     if os.system("idf.py merge-bin") != 0:
         print("merge-bin failed", file=sys.stderr)
-        sys.exit(1)
+        return False
+    return True
 
 
-def zip_bin(name: str, version: str) -> None:
-    """Zip build/merged-binary.bin to releases/v{version}_{name}.zip"""
-    out_dir = Path("releases")
-    out_dir.mkdir(exist_ok=True)
-    output_path = out_dir / f"v{version}_{name}.zip"
+def zip_bin(name: str, version: str, out_dir: Optional[str] = None) -> None:
+    """Zip build/merged-binary.bin to <out_dir>/v{version}_{name}.zip
+
+    If out_dir is None, defaults to "releases".
+    """
+    base = Path(out_dir) if out_dir else Path("releases")
+    base.mkdir(parents=True, exist_ok=True)
+    output_path = base / f"v{version}_{name}.zip"
 
     if output_path.exists():
         output_path.unlink()
@@ -142,21 +146,40 @@ def _collect_variants(config_filename: str = "config.json") -> list[dict[str, st
 
 def _find_board_config_candidates(board_type: str) -> list[str]:
     """Find all CONFIG_BOARD_TYPE_xxx candidates for the given board_type."""
-    board_leaf = board_type.split("/")[-1]
-    pattern = f'set(BOARD_TYPE "{board_leaf}")'
-
-    cmake_file = Path("main/CMakeLists.txt")
-    lines = cmake_file.read_text(encoding="utf-8").splitlines()
+    board_path = board_type.strip("/")
+    lines = Path("main/CMakeLists.txt").read_text(encoding="utf-8").splitlines()
     candidates: list[str] = []
+    branch_symbol: Optional[str] = None
+    branch_lines: list[str] = []
 
-    for idx, line in enumerate(lines):
-        if pattern in line:
-            # Found the BOARD_TYPE line, search backwards for the nearest config guard
-            for back_idx in range(idx - 1, -1, -1):
-                back_line = lines[back_idx]
-                if "if(CONFIG_BOARD_TYPE_" in back_line:
-                    candidates.append(back_line.strip().split("if(")[1].split(")")[0])
-                    break
+    def finish_branch() -> None:
+        if branch_symbol is None:
+            return
+
+        branch = "\n".join(branch_lines)
+        directory_match = re.search(r'set\(BOARD_DIR\s+"([^"]+)"\)', branch)
+        directory = directory_match.group(1) if directory_match else None
+        if directory == board_path:
+            candidates.append(branch_symbol)
+
+    condition_pattern = re.compile(r"^\s*(?:if|elseif)\(([^)]+)\)")
+    for line in lines:
+        condition_match = condition_pattern.match(line)
+        if condition_match:
+            finish_branch()
+            condition = condition_match.group(1)
+            branch_symbol = (
+                condition if condition.startswith("CONFIG_BOARD_TYPE_") else None
+            )
+            branch_lines = []
+        elif re.match(r"^\s*(?:else|endif)\b", line):
+            finish_branch()
+            branch_symbol = None
+            branch_lines = []
+        elif branch_symbol is not None:
+            branch_lines.append(line)
+    finish_branch()
+
     return candidates
 
 
@@ -295,16 +318,70 @@ def _apply_auto_selects(sdkconfig_append: list[str]) -> list[str]:
 ################################################################################
 
 def _board_type_exists(board_type: str) -> bool:
-    cmake_file = Path("main/CMakeLists.txt").read_text(encoding="utf-8")
-    board_leaf = board_type.split("/")[-1]
-    pattern = f'set(BOARD_TYPE "{board_leaf}")'
-    return pattern in cmake_file
+    return bool(_find_board_config_candidates(board_type))
+
+
+def _clean_sdkconfig_appends() -> None:
+    """Remove the sdkconfig segment previously appended by release.py.
+
+    release.py appends its board-specific sdkconfig lines to the shared
+    sdkconfig file on every build. Without cleaning it first, consecutive
+    builds (e.g. multiple variants of the same board, or re-runs) would
+    stack their configs on top of each other and pollute later builds.
+    """
+    sdkconfig = Path("sdkconfig")
+    if not sdkconfig.exists():
+        return
+    marker = "# Append by release.py"
+    lines = sdkconfig.read_text(encoding="utf-8").splitlines()
+    if marker not in lines:
+        return
+    # Drop the marker and everything after it
+    cut = lines.index(marker)
+    sdkconfig.write_text(
+        "\n".join(lines[:cut]).rstrip() + "\n",
+        encoding="utf-8",
+    )
 
 ################################################################################
 # Compile implementation
 ################################################################################
 
-def release(board_type: str, config_filename: str = "config.json", *, filter_name: Optional[str] = None) -> None:
+def _read_target(board_type: str, config_filename: str = "config.json") -> Optional[str]:
+    """Read the chip target (e.g. esp32/esp32c3) from a board's config.json."""
+    cfg_path = _BOARDS_DIR / Path(board_type) / config_filename
+    if not cfg_path.exists():
+        return None
+    try:
+        with cfg_path.open(encoding="utf-8") as f:
+            cfg = json.load(f)
+        return cfg.get("target")
+    except Exception:
+        return None
+
+
+def _current_build_target() -> Optional[str]:
+    """Read the target already configured in build/CMakeCache.txt, if any.
+
+    Returns the IDF_TARGET string (e.g. 'esp32c3') or None when no valid
+    build directory exists yet.
+    """
+    cache = Path("build/CMakeCache.txt")
+    if not cache.exists():
+        return None
+    try:
+        for line in cache.read_text(encoding="utf-8").splitlines():
+            if line.startswith("IDF_TARGET:STRING="):
+                return line.split("=", 1)[1].strip()
+    except Exception:
+        return None
+    return None
+
+
+def release(board_type: str, config_filename: str = "config.json", *,
+            filter_name: Optional[str] = None,
+            out_dir: Optional[str] = None,
+            skip_set_target: bool = False) -> None:
     """Compile and package all/specified variants of the specified board_type
 
     Args:
@@ -334,11 +411,7 @@ def release(board_type: str, config_filename: str = "config.json", *, filter_nam
 
     for build in builds:
         name = build["name"]
-        board_leaf = board_type.split("/")[-1]
 
-        if board_leaf not in name:
-            raise ValueError(f"build.name {name} must contain {board_leaf}")
-        
         final_name = f"{manufacturer}-{name}" if manufacturer else name
         output_path = Path("releases") / f"v{project_version}_{final_name}.zip"
         if output_path.exists():
@@ -370,12 +443,25 @@ def release(board_type: str, config_filename: str = "config.json", *, filter_nam
 
         os.environ.pop("IDF_TARGET", None)
 
-        # Call set-target
-        if os.system(f"idf.py set-target {target}") != 0:
-            print("set-target failed", file=sys.stderr)
-            sys.exit(1)
+        # Call set-target only when necessary:
+        # - skip when the previous board in this target group already set it
+        # - skip when build/ already targets the same chip (avoids fullclean+cmake)
+        if skip_set_target:
+            print(f"skip set-target for {final_name} (target={target}); reusing previous set-target")
+        elif _current_build_target() == target:
+            print(f"skip set-target for {final_name} (target={target}); build/ already matches")
+        else:
+            if os.system(f"idf.py set-target {target}") != 0:
+                print(
+                    f"set-target failed for {final_name} (target={target}); "
+                    f"skipping this build",
+                    file=sys.stderr,
+                )
+                continue
 
-        # Append sdkconfig
+        # Append sdkconfig (clean previous release.py appends first to avoid
+        # stacking configs across variants/boards)
+        _clean_sdkconfig_appends()
         with Path("sdkconfig").open("a", encoding='utf-8') as f:
             f.write("\n")
             f.write("# Append by release.py\n")
@@ -387,10 +473,12 @@ def release(board_type: str, config_filename: str = "config.json", *, filter_nam
             continue
 
         # merge-bin
-        merge_bin()
+        if not merge_bin():
+            print("merge-bin failed; skipping this build", file=sys.stderr)
+            continue
 
         # Zip
-        zip_bin(final_name, project_version)
+        zip_bin(final_name, project_version, out_dir)
 
 ################################################################################
 # CLI entry
@@ -403,6 +491,8 @@ if __name__ == "__main__":
     parser.add_argument("--list-boards", action="store_true", help="List all supported boards and variants")
     parser.add_argument("--json", action="store_true", help="Output in JSON format (use with --list-boards)")
     parser.add_argument("--name", help="Variant name to compile (original name without manufacturer prefix)")
+    parser.add_argument("--target", help="Only build boards whose config.json target matches (e.g. esp32, esp32c3)")
+    parser.add_argument("--out-dir", default=None, help="Output directory for generated zips (default: releases)")
 
     args = parser.parse_args()
 
@@ -439,18 +529,51 @@ if __name__ == "__main__":
     variants_all = _collect_variants(config_filename=args.config)
 
     # Filter board_type list
-    target_board_types: set[str]
     if board_type_input == "all":
         target_board_types = {v["board"] for v in variants_all}
     else:
         target_board_types = {board_type_input}
 
+    # Optional filter by chip target (e.g. only esp32)
+    if args.target:
+        filtered = set()
+        for bt in target_board_types:
+            if _read_target(bt, args.config) == args.target:
+                filtered.add(bt)
+        skipped = target_board_types - filtered
+        if skipped:
+            print(f"[INFO] --target {args.target}: skipping {len(skipped)} board(s) with different target")
+        target_board_types = filtered
+
+    if not target_board_types:
+        print(f"[WARN] No boards matched target '{args.target}'; nothing to build", file=sys.stderr)
+        sys.exit(0)
+
+    # Group boards by target so set-target runs once per chip target.
+    # Within each target group, only the first board triggers set-target;
+    # subsequent boards reuse the already-set target to save fullclean+cmake.
+    boards_by_target: dict[Optional[str], list[str]] = {}
     for bt in sorted(target_board_types):
-        if not _board_type_exists(bt):
-            print(f"[ERROR] board_type {bt} not found in main/CMakeLists.txt", file=sys.stderr)
-            sys.exit(1)
-        cfg_path = _BOARDS_DIR / bt / args.config
-        if bt == board_type_input and not cfg_path.exists():
-            print(f"Board {bt} has no {args.config} config file, skipping")
-            sys.exit(0)
-        release(bt, config_filename=args.config, filter_name=name_filter if bt == board_type_input else None)
+        t = _read_target(bt, args.config)
+        boards_by_target.setdefault(t, []).append(bt)
+
+    for t, boards in boards_by_target.items():
+        for idx, bt in enumerate(boards):
+            if not _board_type_exists(bt):
+                print(
+                    f"[ERROR] board_type {bt} not found in main/CMakeLists.txt; skipping",
+                    file=sys.stderr,
+                )
+                continue
+            cfg_path = _BOARDS_DIR / bt / args.config
+            if bt == board_type_input and not cfg_path.exists():
+                print(f"Board {bt} has no {args.config} config file, skipping")
+                sys.exit(0)
+            skip_set_target = (idx > 0)  # reuse set-target from the first board of this target
+            release(
+                bt,
+                config_filename=args.config,
+                filter_name=name_filter if bt == board_type_input else None,
+                out_dir=args.out_dir,
+                skip_set_target=skip_set_target,
+            )

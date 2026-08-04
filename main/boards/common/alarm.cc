@@ -39,10 +39,9 @@ AlarmManager::AlarmManager(){
         .name = "alarm_timer"
     };
     ESP_ERROR_CHECK(esp_timer_create(&timer_args, &timer_));
-
-    // 启动期闹钟加载涉及云端同步（最长阻塞 ALARM_HTTP_TIMEOUT_MS），
-    // 放在后台任务里执行，避免阻塞构造方（main 任务）的后续初始化。
-    StartReloadTask();
+    // 注意：首次云端同步（HTTPS/TLS/RSA 硬件）不再在构造时启动，
+    // 改由外部在系统启动完成、main 任务空闲后再显式调用 StartReloadTask()，
+    // 避免与唤醒词初始化等并发占用 RSA 硬件导致握手异常。
 }
 
 void AlarmManager::StartReloadTask() {
@@ -50,6 +49,7 @@ void AlarmManager::StartReloadTask() {
         return;
     }
     init_started_ = true;
+
     auto task = [](void* arg) {
         auto* self = static_cast<AlarmManager*>(arg);
         // 网络不可用会由 ReloadAlarms 内部的 HTTP 超时（ALARM_HTTP_TIMEOUT_MS）
@@ -57,7 +57,7 @@ void AlarmManager::StartReloadTask() {
         self->ReloadAlarms();
         vTaskDelete(nullptr);
     };
-    if (xTaskCreate(task, "alarm_init", 4096, this, 1, nullptr) != pdPASS) {
+    if (xTaskCreate(task, "alarm_init", 8192, this, 1, nullptr) != pdPASS) {
         // 任务创建失败则退化为同步加载，保证闹钟至少能初始化
         ESP_LOGW(TAG, "Failed to create alarm init task, fall back to sync ReloadAlarms");
         init_started_ = false;
@@ -299,7 +299,7 @@ void AlarmManager::SyncAlarmsToCloudAsync(std::vector<std::pair<Alarm, std::stri
         delete ctx;
         vTaskDelete(nullptr);
     };
-    if (xTaskCreate(task, "alarm_cloud_sync", 6144, ctx, 1, nullptr) != pdPASS) {
+    if (xTaskCreate(task, "alarm_cloud_sync", 8192, ctx, 1, nullptr) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create alarm cloud sync task");
         delete ctx;
     }
