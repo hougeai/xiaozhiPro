@@ -350,8 +350,8 @@ void Application::HandleActivationDoneEvent() {
     auto& board = Board::GetInstance();
     board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
 
-    // 添加 alarm 实例
-    if (has_server_time_) {
+    // 添加 alarm 实例 (ESP32C3 内存不足，不初始化闹钟管理器)
+    if (has_server_time_ && SystemInfo::GetChipModelName() != "esp32c3") {
         ESP_LOGI(TAG, "Server time synchronized, start alarm manager");
         alarm_m_ = new AlarmManager();
         // 延后启动首次云端同步：避免在激活/唤醒词初始化并发窗口内抢占 RSA 硬件，待 main 任务回到空闲后再由主循环调度执行。

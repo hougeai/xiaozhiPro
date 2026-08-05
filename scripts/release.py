@@ -4,6 +4,7 @@ import json
 import zipfile
 import argparse
 import re
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -62,6 +63,40 @@ def zip_bin(name: str, version: str, out_dir: Optional[str] = None) -> None:
         zipf.write("build/merged-binary.bin", arcname="merged-binary.bin")
     print(f"zip bin to {output_path} done")
 
+
+_SUMMARY_LOG = Path("build_summary.log")
+
+# Global progress counters for the summary log. _SUMMARY_TOTAL is set once in
+# the CLI to the total number of variants to build; _SUMMARY_INDEX increments
+# on every variant outcome so the summary shows e.g. [1/170] [OK] name.
+_SUMMARY_TOTAL = 0
+_SUMMARY_INDEX = 0
+
+
+def _set_summary_total(total: int) -> None:
+    """Record the total number of variants to build (for progress display)."""
+    global _SUMMARY_TOTAL
+    _SUMMARY_TOTAL = total
+
+
+def _write_summary(status: str, final_name: str, detail: str = "") -> None:
+    """Append a one-line build result to build_summary.log.
+
+    Keeps the summary log tiny (one line per variant) and real-time, so it can
+    be tailed while the batch build is still running. The full verbose log
+    (build.log) is written separately by build_all.sh.
+    """
+    global _SUMMARY_INDEX
+    if status in ("OK", "FAIL", "SKIP"):
+        _SUMMARY_INDEX += 1
+    progress = f"[{_SUMMARY_INDEX}/{_SUMMARY_TOTAL}] " if _SUMMARY_TOTAL else ""
+    line = f"{progress}[{status}] {final_name}"
+    if detail:
+        line += f" ({detail})"
+    with _SUMMARY_LOG.open("a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+
 def _get_manufacturer(cfg: dict) -> Optional[str]:
     """Read manufacturer from config.json"""
     m = cfg.get("manufacturer")
@@ -69,14 +104,103 @@ def _get_manufacturer(cfg: dict) -> Optional[str]:
         return m.strip()
     return None
 
+
+def _parse_version(value: str) -> tuple[int, int, int]:
+    """Parse an ESP-IDF version string such as 5.5.4 or v6.0."""
+    match = re.search(r"v?(\d+)\.(\d+)(?:\.(\d+))?", value)
+    if not match:
+        raise ValueError(f"Invalid ESP-IDF version: {value}")
+    return tuple(int(part or 0) for part in match.groups())
+
+
+def _detect_idf_version() -> tuple[int, int, int]:
+    """Resolve the active ESP-IDF version for version-gated build variants."""
+    idf_path = os.environ.get("IDF_PATH")
+    if idf_path:
+        version_file = Path(idf_path) / "tools/cmake/version.cmake"
+        if version_file.exists():
+            values: dict[str, int] = {}
+            for line in version_file.read_text(encoding="utf-8").splitlines():
+                match = re.match(
+                    r"set\(IDF_VERSION_(MAJOR|MINOR|PATCH)\s+(\d+)\)", line
+                )
+                if match:
+                    values[match.group(1)] = int(match.group(2))
+            if all(part in values for part in ("MAJOR", "MINOR", "PATCH")):
+                return values["MAJOR"], values["MINOR"], values["PATCH"]
+
+    try:
+        output = subprocess.run(
+            ["idf.py", "--version"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        return _parse_version(output)
+    except (FileNotFoundError, subprocess.CalledProcessError, ValueError) as error:
+        raise RuntimeError(
+            "ESP-IDF version was not detected. "
+            "Source export.sh before running release.py."
+        ) from error
+
+
+def _version_matches(version: tuple[int, int, int], expression: str) -> bool:
+    """Evaluate a single comparison such as '<6.0' or '>=6.0.1'."""
+    match = re.fullmatch(
+        r"\s*(<=|>=|<|>|==)\s*(v?\d+\.\d+(?:\.\d+)?)\s*", expression
+    )
+    if not match:
+        raise ValueError(f"Invalid ESP-IDF version expression: {expression}")
+    operator, expected_text = match.groups()
+    expected = _parse_version(expected_text)
+    return {
+        "<": version < expected,
+        "<=": version <= expected,
+        ">": version > expected,
+        ">=": version >= expected,
+        "==": version == expected,
+    }[operator]
+
+
+def _get_builds_for_idf(cfg: dict,
+                        idf_version: tuple[int, int, int]) -> list[dict]:
+    """Return build entries whose optional ESP-IDF version rule matches."""
+    builds: list[dict] = []
+    for build in cfg.get("builds", []):
+        expression = build.get("idf_version")
+        if expression and not _version_matches(idf_version, expression):
+            continue
+        builds.append(dict(build))
+    return builds
+
+
 ################################################################################
 # board / variant related functions
 ################################################################################
 
 _BOARDS_DIR = Path("main/boards")
 
+_REPORTED_IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9.-]+$")
+
+
+def _validate_reported_identifier(value: object, field: str) -> str:
+    """Validate an OTA-reported board type or name (lowercase letters/digits/.-)."""
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"missing non-empty {field}")
+    if not _REPORTED_IDENTIFIER_PATTERN.fullmatch(value):
+        raise ValueError(
+            f"{field} {value!r} must contain only lowercase letters, "
+            'digits, "." and "-"'
+        )
+    return value
+
+
 def _collect_variants(config_filename: str = "config.json") -> list[dict[str, str]]:
-    """Traverse all boards under main/boards, collect variant information.
+    """Traverse all boards under main/boards, collect and validate variants.
+
+    Mirrors scripts/build.py._collect_variants: enforces a unique OTA-reported
+    type/name/identity per board and a unique artifact name, so release zips
+    never silently overwrite each other.
 
     Return example:
         [{"board": "bread-compact-ml307", "name": "bread-compact-ml307", "full_name": "bread-compact-ml307"}, ...]
@@ -84,6 +208,8 @@ def _collect_variants(config_filename: str = "config.json") -> list[dict[str, st
     """
     variants: list[dict[str, str]] = []
     errors: list[str] = []
+    type_owners: dict[str, str] = {}
+    name_owners: dict[str, str] = {}
 
     for cfg_path in _BOARDS_DIR.rglob(config_filename):
         board_dir = cfg_path.parent
@@ -96,6 +222,24 @@ def _collect_variants(config_filename: str = "config.json") -> list[dict[str, st
                 cfg = json.load(f)
 
             manufacturer = _get_manufacturer(cfg)
+            # `type` is the OTA-reported identity used by build.py; it is not
+            # required for release.py (which names zips by manufacturer+name).
+            # Validate it only when present.
+            reported_type: Optional[str] = None
+            raw_type = cfg.get("type")
+            if raw_type is not None:
+                reported_type = _validate_reported_identifier(
+                    raw_type, 'top-level "type"'
+                )
+                # Unique reported board type (informational for release.py).
+                previous = type_owners.get(reported_type)
+                if previous is not None and previous != board:
+                    errors.append(
+                        f"duplicate reported board type {reported_type!r} in "
+                        f"{previous} and {board}"
+                    )
+                else:
+                    type_owners[reported_type] = board
 
             # Check manufacturer consistency with directory structure
             if "/" in board:
@@ -121,26 +265,49 @@ def _collect_variants(config_filename: str = "config.json") -> list[dict[str, st
                     )
 
             for build in cfg.get("builds", []):
-                name = build["name"]
+                name = _validate_reported_identifier(build.get("name"), 'build "name"')
                 full_name = f"{manufacturer}-{name}" if manufacturer else name
+
+                # Unique reported name.
+                previous_name = name_owners.get(name)
+                if previous_name is not None:
+                    errors.append(
+                        f"duplicate reported board name {name!r} in "
+                        f"{previous_name} and {cfg_path}"
+                    )
+                else:
+                    name_owners[name] = str(cfg_path)
+
                 variants.append({
-                    "board": board, 
+                    "board": board,
                     "name": name,
                     "full_name": full_name
                 })
 
         except Exception as e:
-            print(f"[ERROR] Failed to parse {cfg_path}: {e}", file=sys.stderr)
+            errors.append(f"{cfg_path}: {e}")
+
+    # Unique artifact name (manufacturer + name), which maps to the zip file.
+    seen_names: dict[str, str] = {}
+    for variant in variants:
+        previous_board = seen_names.get(variant["full_name"])
+        if previous_board is not None:
+            errors.append(
+                f"duplicate artifact name {variant['full_name']!r} in "
+                f"{previous_board} and {variant['board']}"
+            )
+        else:
+            seen_names[variant["full_name"]] = variant["board"]
 
     # Report all errors at once
     if errors:
-        print("\n[ERROR] Found manufacturer configuration issues:", file=sys.stderr)
+        print("\n[ERROR] Found board configuration issues:", file=sys.stderr)
         for err in errors:
             print(f"  - {err}", file=sys.stderr)
         print(file=sys.stderr)
         sys.exit(1)
 
-    return variants
+    return sorted(variants, key=lambda variant: (variant["board"], variant["name"]))
 
 
 
@@ -321,27 +488,57 @@ def _board_type_exists(board_type: str) -> bool:
     return bool(_find_board_config_candidates(board_type))
 
 
-def _clean_sdkconfig_appends() -> None:
-    """Remove the sdkconfig segment previously appended by release.py.
+def _regenerate_sdkconfig(target: str, sdkconfig_append: list[str],
+                          *, target_changed: bool = False) -> bool:
+    """Regenerate sdkconfig from project defaults plus the selected variant.
 
-    release.py appends its board-specific sdkconfig lines to the shared
-    sdkconfig file on every build. Without cleaning it first, consecutive
-    builds (e.g. multiple variants of the same board, or re-runs) would
-    stack their configs on top of each other and pollute later builds.
+    Mirrors scripts/build.py._regenerate_sdkconfig: the variant's sdkconfig
+    lines are written to a dedicated defaults fragment and ESP-IDF is asked to
+    reconfigure using `sdkconfig.defaults` + that fragment. This guarantees a
+    clean, reproducible configuration per board (no stale append leftovers),
+    while keeping set-target reuse intact.
+
+    Returns True on success, False on failure (caller should skip this board
+    but keep building the remaining ones).
     """
     sdkconfig = Path("sdkconfig")
-    if not sdkconfig.exists():
-        return
-    marker = "# Append by release.py"
-    lines = sdkconfig.read_text(encoding="utf-8").splitlines()
-    if marker not in lines:
-        return
-    # Drop the marker and everything after it
-    cut = lines.index(marker)
-    sdkconfig.write_text(
-        "\n".join(lines[:cut]).rstrip() + "\n",
+    sdkconfig_old = Path("sdkconfig.old")
+    moved_sdkconfig = False
+    if sdkconfig.exists():
+        if target_changed:
+            # set-target already saved the previous config as sdkconfig.old.
+            # Discard only the fresh default config it created.
+            sdkconfig.unlink()
+        else:
+            if sdkconfig_old.exists():
+                sdkconfig_old.unlink()
+            sdkconfig.replace(sdkconfig_old)
+            moved_sdkconfig = True
+
+    fragment = Path("build/xiaozhi-build.sdkconfig.defaults")
+    fragment.parent.mkdir(parents=True, exist_ok=True)
+    fragment.write_text(
+        "# Generated by scripts/release.py\n"
+        + "\n".join(sdkconfig_append)
+        + "\n",
         encoding="utf-8",
     )
+
+    defaults = []
+    if Path("sdkconfig.defaults").exists():
+        defaults.append("sdkconfig.defaults")
+    defaults.append(fragment.as_posix())
+    if os.system(
+        f"idf.py -DIDF_TARGET={target} "
+        f"-DSDKCONFIG_DEFAULTS='{';'.join(defaults)}' reconfigure"
+    ) != 0:
+        print("sdkconfig reconfigure failed", file=sys.stderr)
+        # Restore the previous sdkconfig so the build directory is not left in
+        # an inconsistent state for subsequent boards.
+        if moved_sdkconfig and sdkconfig_old.exists() and not sdkconfig.exists():
+            sdkconfig_old.replace(sdkconfig)
+        return False
+    return True
 
 ################################################################################
 # Compile implementation
@@ -381,13 +578,16 @@ def _current_build_target() -> Optional[str]:
 def release(board_type: str, config_filename: str = "config.json", *,
             filter_name: Optional[str] = None,
             out_dir: Optional[str] = None,
-            skip_set_target: bool = False) -> None:
+            skip_set_target: bool = False,
+            idf_version: Optional[tuple[int, int, int]] = None) -> None:
     """Compile and package all/specified variants of the specified board_type
 
     Args:
         board_type: directory name under main/boards
         config_filename: config.json name (default: config.json)
         filter_name: if specified, only compile the build["name"] that matches
+        idf_version: resolved ESP-IDF version; builds with an incompatible
+            `idf_version` rule are skipped (with a log line).
     """
     cfg_path = _BOARDS_DIR / Path(board_type) / config_filename
     if not cfg_path.exists():
@@ -399,10 +599,35 @@ def release(board_type: str, config_filename: str = "config.json", *,
 
     with cfg_path.open(encoding='utf-8') as f:
         cfg = json.load(f)
-    target = cfg["target"]
+    target = cfg.get("target")
+    if not target:
+        print(
+            f"[WARN] {cfg_path}: missing \"target\", skipping {board_type}",
+            file=sys.stderr,
+        )
+        return
     manufacturer = _get_manufacturer(cfg)
 
-    builds = cfg.get("builds", [])
+    # Filter builds by optional ESP-IDF version constraint. Variants excluded
+    # by the `idf_version` rule still get a summary line so the progress counter
+    # stays in sync with the total.
+    all_builds = list(cfg.get("builds", []))
+    builds = _get_builds_for_idf(cfg, idf_version) if idf_version else all_builds
+    if idf_version and len(builds) != len(all_builds):
+        for build in all_builds:
+            if build in builds:
+                continue
+            vname = f"{manufacturer}-{build.get('name')}" if manufacturer else build.get("name")
+            _write_summary(
+                "SKIP", vname,
+                f"incompatible with ESP-IDF {'.'.join(str(p) for p in idf_version)}",
+            )
+    if not builds and not filter_name:
+        print(
+            f"[WARN] {board_type}: no compatible variants to build, skipping",
+            file=sys.stderr,
+        )
+        return
     if filter_name:
         builds = [b for b in builds if b["name"] == filter_name]
         if not builds:
@@ -413,9 +638,13 @@ def release(board_type: str, config_filename: str = "config.json", *,
         name = build["name"]
 
         final_name = f"{manufacturer}-{name}" if manufacturer else name
-        output_path = Path("releases") / f"v{project_version}_{final_name}.zip"
+        # Use the same output directory as zip_bin so the "already exists"
+        # skip check is consistent with where the zip is actually written.
+        output_base = Path(out_dir) if out_dir else Path("releases")
+        output_path = output_base / f"v{project_version}_{final_name}.zip"
         if output_path.exists():
             print(f"Skipping {final_name} because {output_path} already exists")
+            _write_summary("SKIP", final_name, "already exists")
             continue
 
         # Process sdkconfig_append
@@ -446,6 +675,7 @@ def release(board_type: str, config_filename: str = "config.json", *,
         # Call set-target only when necessary:
         # - skip when the previous board in this target group already set it
         # - skip when build/ already targets the same chip (avoids fullclean+cmake)
+        target_changed = False
         if skip_set_target:
             print(f"skip set-target for {final_name} (target={target}); reusing previous set-target")
         elif _current_build_target() == target:
@@ -457,28 +687,33 @@ def release(board_type: str, config_filename: str = "config.json", *,
                     f"skipping this build",
                     file=sys.stderr,
                 )
+                _write_summary("FAIL", final_name, "set-target failed")
                 continue
+            target_changed = True
 
-        # Append sdkconfig (clean previous release.py appends first to avoid
-        # stacking configs across variants/boards)
-        _clean_sdkconfig_appends()
-        with Path("sdkconfig").open("a", encoding='utf-8') as f:
-            f.write("\n")
-            f.write("# Append by release.py\n")
-            for append in sdkconfig_append:
-                f.write(f"{append}\n")
+        # Regenerate sdkconfig from sdkconfig.defaults + a per-variant fragment,
+        # so every board gets a clean, reproducible configuration (no stale
+        # append leftovers), independent of set-target reuse.
+        if not _regenerate_sdkconfig(target, sdkconfig_append,
+                                     target_changed=target_changed):
+            print(f"skip {final_name}: sdkconfig reconfigure failed", file=sys.stderr)
+            _write_summary("FAIL", final_name, "sdkconfig reconfigure failed")
+            continue
         # Build with macro BOARD_NAME defined to name
         if os.system(f"idf.py -DBOARD_NAME={name} -DBOARD_TYPE={board_type} build") != 0:
             print("build failed")
+            _write_summary("FAIL", final_name, "build failed")
             continue
 
         # merge-bin
         if not merge_bin():
             print("merge-bin failed; skipping this build", file=sys.stderr)
+            _write_summary("FAIL", final_name, "merge-bin failed")
             continue
 
         # Zip
         zip_bin(final_name, project_version, out_dir)
+        _write_summary("OK", final_name)
 
 ################################################################################
 # CLI entry
@@ -508,7 +743,9 @@ if __name__ == "__main__":
 
     # Current directory firmware packaging mode
     if args.board is None:
-        merge_bin()
+        if not merge_bin():
+            print("merge-bin failed; nothing to package", file=sys.stderr)
+            sys.exit(1)
         curr_board_type = get_board_type_from_compile_commands()
         if curr_board_type is None:
             print("Failed to parse board_type from compile_commands.json", file=sys.stderr)
@@ -520,6 +757,13 @@ if __name__ == "__main__":
     # Compile mode
     board_type_input: str = args.board
     name_filter: Optional[str] = args.name
+
+    # Detect ESP-IDF version once; variants with an incompatible `idf_version`
+    # rule will be skipped by release() with a log line.
+    idf_version = _detect_idf_version()
+    print(
+        f"[INFO] ESP-IDF version: {'.'.join(str(p) for p in idf_version)}"
+    )
 
     # Check board_type in CMakeLists
     if board_type_input != "all" and not _board_type_exists(board_type_input):
@@ -549,6 +793,23 @@ if __name__ == "__main__":
         print(f"[WARN] No boards matched target '{args.target}'; nothing to build", file=sys.stderr)
         sys.exit(0)
 
+    # Pre-compute the total number of variants (ALL variants, including ones
+    # that will be skipped due to an incompatible `idf_version` rule). Every
+    # variant outcome is written to the summary log, so the denominator here
+    # matches the number of summary lines exactly.
+    total_variants = 0
+    for bt in sorted(target_board_types):
+        cfg_path = _BOARDS_DIR / bt / args.config
+        if not cfg_path.exists():
+            continue
+        try:
+            with cfg_path.open(encoding="utf-8") as f:
+                cfg = json.load(f)
+            total_variants += len(cfg.get("builds", []))
+        except Exception:
+            pass
+    _set_summary_total(total_variants)
+
     # Group boards by target so set-target runs once per chip target.
     # Within each target group, only the first board triggers set-target;
     # subsequent boards reuse the already-set target to save fullclean+cmake.
@@ -568,7 +829,7 @@ if __name__ == "__main__":
             cfg_path = _BOARDS_DIR / bt / args.config
             if bt == board_type_input and not cfg_path.exists():
                 print(f"Board {bt} has no {args.config} config file, skipping")
-                sys.exit(0)
+                continue
             skip_set_target = (idx > 0)  # reuse set-target from the first board of this target
             release(
                 bt,
@@ -576,4 +837,5 @@ if __name__ == "__main__":
                 filter_name=name_filter if bt == board_type_input else None,
                 out_dir=args.out_dir,
                 skip_set_target=skip_set_target,
+                idf_version=idf_version,
             )

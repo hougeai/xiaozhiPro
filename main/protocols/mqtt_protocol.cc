@@ -98,6 +98,14 @@ bool MqttProtocol::StartMqttProClient() {
     int keepalive_interval = settings.GetInt("keepalive", 240);
     publish_topic_pro_ = settings.GetString("publish_topic");
 
+    // MQTT Pro is optional. When not configured (empty endpoint) do not create
+    // a second MQTT-over-TLS client. On ESP32-C3 a TLS connect to an empty
+    // hostname still allocates the client and wastes scarce RAM; skip it.
+    if (endpoint.empty()) {
+        ESP_LOGI(TAG, "MQTT Pro not configured, skip");
+        return false;
+    }
+
     auto network = Board::GetInstance().GetNetwork();
     mqtt_pro_ = network->CreateMqtt(1);
     mqtt_pro_->SetKeepAlive(keepalive_interval);

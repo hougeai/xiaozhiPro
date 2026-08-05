@@ -160,122 +160,9 @@ void McpServer::AddCommonTools() {
             });
     }
 #endif  // !defined(CONFIG_IDF_TARGET_ESP32)
-    // alarm
-    AddTool("self.alarm.set",
-        "为用户添加各种闹钟提醒功能，比如：帮我定一个10分钟的闹钟；20秒后提醒我关煤气炉；每天下午2点提醒我吃药"
-        "Args:"
-        "delay: int, 以秒为单位，多久之后执行；如果是定时的闹钟那么delay为-1"
-        "hour: int,  表示时；如早上7点 the hour can be 7 ,晚上8点 the hour can be 20，如果没明确说 the hour can be -1"
-        "minute: int, 分钟；早上7:00， the minute can be 0， 如果7点半 the minute can be 30 如果没明确说 the minute can be -1"
-        "repeat: int , 表示重复次数；如果没说则默认1次，否则为具体的次数，如果说每天/每小时等重复但是没有具体次数的，最多重复10000次"
-        "interval: int, 提醒间隔时间，单位为秒；repeat > 0时生效，比如每小时提醒我，interval should be 3600，每天提醒我，interval should be 86400"
-        "name: string, 提醒名称"
-        "Return:"
-        "A JSON object that indicates whether the alarm is set successfully.",
-        PropertyList({
-            Property("delay", kPropertyTypeInteger),
-            Property("hour", kPropertyTypeInteger),
-            Property("minute", kPropertyTypeInteger),
-            Property("repeat", kPropertyTypeInteger),
-            Property("interval", kPropertyTypeInteger),
-            Property("name", kPropertyTypeString)
-        }),
-        [](const PropertyList& properties) -> ReturnValue {
-            auto& app = Application::GetInstance();
-            if(app.alarm_m_ == nullptr){
-                ESP_LOGE(TAG, "AlarmManager is nullptr");
-                 return R"({"success":false,"message":"AlarmManager is not initialized"})";
-            }
-            // ESP_LOGI(TAG, "SetAlarm");
-            int delay = properties["delay"].value<int>();
-            int hour = properties["hour"].value<int>();
-            int minute = properties["minute"].value<int>();
-            int repeat = properties["repeat"].value<int>();
-            int interval = properties["interval"].value<int>();
-            std::string name = properties["name"].value<std::string>();
-            ESP_LOGI(TAG, "SetAlarm delay %d hour %d minute %d repeat %d interval %d name %s", delay, hour, minute, repeat, interval, name.c_str());
-            std::string result = app.alarm_m_->SetAlarm(delay, hour, minute, repeat, interval, name);
-            if (result.empty()) {
-                return R"({"success":true,"message":"Alarm set successfully"})";
-            } else {
-                return std::string(R"({"success":false,"message":")" + result + R"("})");
-            }
-        });
-    AddTool("self.alarm.del",
-        "根据id删除一个闹钟提醒，首先用self.alarm.queryall查询所有闹钟，然后基于用户意图给出闹钟列表中的一个id，删除前需要和用户确认"
-        "Args:\n"
-        "  `id`: The id of the alarm.\n"
-        "Return:\n"
-        "  A JSON object that indicates whether the alarm is deleted successfully.",
-        PropertyList({
-            Property("id", kPropertyTypeInteger)
-        }),
-        [](const PropertyList& properties) -> ReturnValue {
-            auto& app = Application::GetInstance();
-            if(app.alarm_m_ == nullptr){
-                ESP_LOGE(TAG, "AlarmManager is nullptr");
-                 return R"({"success":false,"message":"AlarmManager is not initialized"})";
-            }
-            ESP_LOGI(TAG, "DelAlarm");
-            int id = properties["id"].value<int>();
-            std::string result = app.alarm_m_->DelAlarmById(id);
-            if (result.empty()) {
-                return R"({"success":true,"message":"Alarm delete successfully"})";
-            } else {
-                return std::string(R"({"success":false,"message":")" + result + R"("})");
-            }
-        });
-    AddTool("self.alarm.cleanup",
-        "清空所有的提醒和闹钟；比如：我想清空/关闭所有的提醒和闹钟",
-        PropertyList(),
-        [](const PropertyList& properties) -> ReturnValue {
-            auto& app = Application::GetInstance();
-            if(app.alarm_m_ == nullptr){
-                ESP_LOGE(TAG, "AlarmManager is nullptr");
-                 return R"({"success":false,"message":"AlarmManager is not initialized"})";
-            }
-            ESP_LOGI(TAG, "CleanUp Alarm");
-            std::string result = app.alarm_m_->CleanUpAlarm();
-            if (!result.empty()) {
-                return std::string(R"({"success":false,"message":")" + result + R"("})");
-            }
-            return R"({"success":true,"message":"Alarm cleaned up successfully"})";
-        });
-    AddTool("self.alarm.queryall",
-        "查询所有的提醒和闹钟",
-        PropertyList(),
-        [](const PropertyList& properties) -> ReturnValue {
-            auto& app = Application::GetInstance();
-            if(app.alarm_m_ == nullptr){
-                ESP_LOGE(TAG, "AlarmManager is nullptr");
-                 return R"({"success":false,"message":"AlarmManager is not initialized"})";
-            }
-            ESP_LOGI(TAG, "Query All Alarm");
-            std::string alarm_list = app.alarm_m_->QueryAllAlarm();
-            return std::string(R"({"success":true,"alarms":)") + alarm_list + R"(})";
-        });
-    AddTool("self.alarm.reload",
-        "重新加载所有的提醒和闹钟",
-        PropertyList(),
-        [](const PropertyList& properties) -> ReturnValue {
-            auto& app = Application::GetInstance();
-            if(app.alarm_m_ == nullptr){
-                ESP_LOGE(TAG, "AlarmManager is nullptr");
-                 return R"({"success":false,"message":"AlarmManager is not initialized"})";
-            }
-            ESP_LOGI(TAG, "Reload All Alarm");
-            std::string result = app.alarm_m_->ReloadAlarms();
-            if (!result.empty()) {
-                return std::string(R"({"success":false,"message":")" + result + R"("})");
-            }
-            return R"({"success":true,"message":"Alarm reloaded successfully"})";
-        });
     // knowledge base
     AddTool("self.kb.query",
-        "当用户咨询的问题超出你的认知范围，不可胡编乱造，调用本工具发起检索。"
-        "本工具为异步：调用后立即返回'知识库检索中'，并非检索结果，应告知用户正在检索请稍候；检索完成后会收到'知识库报告'。"
-        "Args:"
-        "query: str, 用户的原始问题（自然语句，不要提炼关键词）",
+        "知识库检索。用户问题超出认知、不可胡编乱造时调用。异步：立即返回'检索中'并告知用户正在检索，完成后会收到'知识库报告'。参数query为原始问题。",
         PropertyList({
             Property("query", kPropertyTypeString)
         }),
@@ -345,7 +232,7 @@ void McpServer::AddCommonTools() {
             return result_str;
         });
     AddTool("self.kb.retrieve",
-        "当且仅当收到'知识库报告'时，调用此工具检索最新消息，否则不要调用",
+        "仅在收到'知识库报告'时调用，检索最新消息，否则不要调用。",
         PropertyList(),
         [](const PropertyList& properties) -> ReturnValue {
             auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
@@ -398,9 +285,7 @@ void McpServer::AddCommonTools() {
         });
     // 长期记忆
     AddTool("self.memory.search",
-        "搜索用户个人记忆，获取与当前话题相关的历史信息。以下场景必须调用此工具：1) 用户提到'之前/上次/以前'等时间回溯词；2) 用户提及具体人名、地点等专有名词且可能存在于记忆中；3) 用户要求继续/修改之前的讨论；4) 回答需结合用户个人偏好、习惯或历史背景"
-        "Args:"
-        "query: str, 检索词，多个检索词用空格隔开",
+        "搜索用户个人记忆。当用户提'之前/上次/以前'、具体人名地点等专有名词、要求继续之前讨论、或需结合个人偏好习惯时调用。参数query为检索词，多词用空格分隔。",
         PropertyList({
             Property("query", kPropertyTypeString)
         }),
@@ -471,11 +356,7 @@ void McpServer::AddCommonTools() {
         });
     // 视觉理解
     AddTool("self.vision.analysis",
-        "当用户要求你看东西或打开摄像头时，请调用此工具获取视觉分析内容。"
-        "Args:\n"
-        "  `question`: The question that you want to ask about the vision.\n"
-        "Return:\n"
-        "  A JSON object that provides the vision information.",
+        "视觉分析。用户要求看东西或开摄像头时调用，参数question为要问的问题。",
         PropertyList({
             Property("question", kPropertyTypeString)
         }),
@@ -539,11 +420,7 @@ void McpServer::AddCommonTools() {
         });
     // openclaw
     AddTool("self.openclaw.send",
-        "当用户要求你给openclaw(欧克劳)发消息时，请调用此工具发送消息内容。"
-        "Args:\n"
-        "  `message`: The message that you should send to openclaw.\n"
-        "Return:\n"
-        "  A JSON object that provides the response from openclaw.",
+        "给openclaw(欧克劳)发消息，参数message为消息内容。",
         PropertyList({
             Property("message", kPropertyTypeString)
         }),
@@ -659,11 +536,7 @@ void McpServer::AddCommonTools() {
         });
     // hermes
     AddTool("self.hermes.send",
-        "当用户要求你给hermes(爱马仕)发消息时，请调用此工具发送消息内容。"
-        "Args:\n"
-        "  `message`: The message that you should send to hermes.\n"
-        "Return:\n"
-        "  A JSON object that provides the response from hermes.",
+        "给hermes(爱马仕)发消息，参数message为消息内容。",
         PropertyList({
             Property("message", kPropertyTypeString)
         }),
@@ -779,8 +652,7 @@ void McpServer::AddCommonTools() {
         });
     // Home Assistant
     AddTool("self.ha.sensors",
-        "当用户询问 Home Assistant (HA) 智能家居传感器数据（如温度、湿度、滤芯寿命、网络速度等）时，调用此工具获取所有传感器列表。"
-        "返回按设备分组的传感器数据，每个传感器包含 entity_id、name、state、unit 字段。",
+        "获取Home Assistant(HA)传感器列表，返回按设备分组的 entity_id、name、state、unit。",
         PropertyList(),
         [](const PropertyList& properties) -> ReturnValue {
             auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
@@ -830,9 +702,7 @@ void McpServer::AddCommonTools() {
             return result_str;
         });
     AddTool("self.ha.controls",
-        "当用户想要控制 Home Assistant (HA) 智能家居设备（如开灯、关灯、打开摄像头移动检测等）时，先调用此工具获取可控制设备列表。"
-        "返回按设备分组的可控制设备，每个设备包含 entity_id、name、state、domain、services 字段。"
-        "你需要从中找到用户想控制的设备对应的 entity_id 和可用的 service，然后调用 self.ha.control 工具执行控制。",
+        "获取HA可控设备列表，返回 entity_id、name、state、domain、services，用于后续 self.ha.control。",
         PropertyList(),
         [](const PropertyList& properties) -> ReturnValue {
             auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
@@ -882,13 +752,7 @@ void McpServer::AddCommonTools() {
             return result_str;
         });
     AddTool("self.ha.control",
-        "控制 Home Assistant (HA) 智能家居设备。调用前请先用 self.ha.controls 工具获取可用的 entity_id 和 service。"
-        "Args:\n"
-        "  `entity_id`: 设备实体ID，如 light.xxx、switch.xxx、camera.xxx\n"
-        "  `service`: 服务名称，如 turn_on、turn_off、toggle、snapshot\n"
-        "  `fields`: 额外参数（JSON字符串，无额外参数时传空对象 {}）\n"
-        "Return:\n"
-        "  A JSON object with entity_id, state and success.",
+        "控制HA设备。参数entity_id为设备实体，service为服务(turn_on等)，fields为额外参数JSON。",
         PropertyList({
             Property("entity_id", kPropertyTypeString),
             Property("service", kPropertyTypeString),
@@ -985,6 +849,118 @@ void McpServer::AddCommonTools() {
             cJSON* result = cJSON_CreateObject();
             cJSON_AddStringToObject(result, "state", state_name);
             return result;
+        });
+    // alarm+music (disabled on ESP32-C3: insufficient RAM)
+#if !defined(CONFIG_IDF_TARGET_ESP32C3)
+    // alarm
+    AddTool("self.alarm.set",
+        "为用户添加各种闹钟提醒功能，比如：帮我定一个10分钟的闹钟；20秒后提醒我关煤气炉；每天下午2点提醒我吃药"
+        "Args:"
+        "delay: int, 以秒为单位，多久之后执行；如果是定时的闹钟那么delay为-1"
+        "hour: int,  表示时；如早上7点 the hour can be 7 ,晚上8点 the hour can be 20，如果没明确说 the hour can be -1"
+        "minute: int, 分钟；早上7:00， the minute can be 0， 如果7点半 the minute can be 30 如果没明确说 the minute can be -1"
+        "repeat: int , 表示重复次数；如果没说则默认1次，否则为具体的次数，如果说每天/每小时等重复但是没有具体次数的，最多重复10000次"
+        "interval: int, 提醒间隔时间，单位为秒；repeat > 0时生效，比如每小时提醒我，interval should be 3600，每天提醒我，interval should be 86400"
+        "name: string, 提醒名称"
+        "Return:"
+        "A JSON object that indicates whether the alarm is set successfully.",
+        PropertyList({
+            Property("delay", kPropertyTypeInteger),
+            Property("hour", kPropertyTypeInteger),
+            Property("minute", kPropertyTypeInteger),
+            Property("repeat", kPropertyTypeInteger),
+            Property("interval", kPropertyTypeInteger),
+            Property("name", kPropertyTypeString)
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto& app = Application::GetInstance();
+            if(app.alarm_m_ == nullptr){
+                ESP_LOGE(TAG, "AlarmManager is nullptr");
+                 return R"({"success":false,"message":"AlarmManager is not initialized"})";
+            }
+            // ESP_LOGI(TAG, "SetAlarm");
+            int delay = properties["delay"].value<int>();
+            int hour = properties["hour"].value<int>();
+            int minute = properties["minute"].value<int>();
+            int repeat = properties["repeat"].value<int>();
+            int interval = properties["interval"].value<int>();
+            std::string name = properties["name"].value<std::string>();
+            ESP_LOGI(TAG, "SetAlarm delay %d hour %d minute %d repeat %d interval %d name %s", delay, hour, minute, repeat, interval, name.c_str());
+            std::string result = app.alarm_m_->SetAlarm(delay, hour, minute, repeat, interval, name);
+            if (result.empty()) {
+                return R"({"success":true,"message":"Alarm set successfully"})";
+            } else {
+                return std::string(R"({"success":false,"message":")" + result + R"("})");
+            }
+        });
+    AddTool("self.alarm.del",
+        "根据id删除一个闹钟提醒，首先用self.alarm.queryall查询所有闹钟，然后基于用户意图给出闹钟列表中的一个id，删除前需要和用户确认"
+        "Args:\n"
+        "  `id`: The id of the alarm.\n"
+        "Return:\n"
+        "  A JSON object that indicates whether the alarm is deleted successfully.",
+        PropertyList({
+            Property("id", kPropertyTypeInteger)
+        }),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto& app = Application::GetInstance();
+            if(app.alarm_m_ == nullptr){
+                ESP_LOGE(TAG, "AlarmManager is nullptr");
+                 return R"({"success":false,"message":"AlarmManager is not initialized"})";
+            }
+            ESP_LOGI(TAG, "DelAlarm");
+            int id = properties["id"].value<int>();
+            std::string result = app.alarm_m_->DelAlarmById(id);
+            if (result.empty()) {
+                return R"({"success":true,"message":"Alarm delete successfully"})";
+            } else {
+                return std::string(R"({"success":false,"message":")" + result + R"("})");
+            }
+        });
+    AddTool("self.alarm.cleanup",
+        "清空所有的提醒和闹钟；比如：我想清空/关闭所有的提醒和闹钟",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto& app = Application::GetInstance();
+            if(app.alarm_m_ == nullptr){
+                ESP_LOGE(TAG, "AlarmManager is nullptr");
+                 return R"({"success":false,"message":"AlarmManager is not initialized"})";
+            }
+            ESP_LOGI(TAG, "CleanUp Alarm");
+            std::string result = app.alarm_m_->CleanUpAlarm();
+            if (!result.empty()) {
+                return std::string(R"({"success":false,"message":")" + result + R"("})");
+            }
+            return R"({"success":true,"message":"Alarm cleaned up successfully"})";
+        });
+    AddTool("self.alarm.queryall",
+        "查询所有的提醒和闹钟",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto& app = Application::GetInstance();
+            if(app.alarm_m_ == nullptr){
+                ESP_LOGE(TAG, "AlarmManager is nullptr");
+                 return R"({"success":false,"message":"AlarmManager is not initialized"})";
+            }
+            ESP_LOGI(TAG, "Query All Alarm");
+            std::string alarm_list = app.alarm_m_->QueryAllAlarm();
+            return std::string(R"({"success":true,"alarms":)") + alarm_list + R"(})";
+        });
+    AddTool("self.alarm.reload",
+        "重新加载所有的提醒和闹钟",
+        PropertyList(),
+        [](const PropertyList& properties) -> ReturnValue {
+            auto& app = Application::GetInstance();
+            if(app.alarm_m_ == nullptr){
+                ESP_LOGE(TAG, "AlarmManager is nullptr");
+                 return R"({"success":false,"message":"AlarmManager is not initialized"})";
+            }
+            ESP_LOGI(TAG, "Reload All Alarm");
+            std::string result = app.alarm_m_->ReloadAlarms();
+            if (!result.empty()) {
+                return std::string(R"({"success":false,"message":")" + result + R"("})");
+            }
+            return R"({"success":true,"message":"Alarm reloaded successfully"})";
         });
     // music
     AddTool("self.music.list",
@@ -1152,6 +1128,7 @@ void McpServer::AddCommonTools() {
                 return std::string(R"({"success":false,"message":")" + result + R"("})");
             }
         });
+#endif // !CONFIG_IDF_TARGET_ESP32C3
     // sys
     AddTool("self.sys.device_auth",
         "当用户要求绑定设备时使用此工具，返回验证码。\n",
