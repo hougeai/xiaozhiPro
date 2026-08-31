@@ -14,6 +14,7 @@ static const char* const STATE_STRINGS[] = {
     "connecting",
     "listening",
     "speaking",
+    "notifying",
     "upgrading",
     "activating",
     "audio_testing",
@@ -74,6 +75,7 @@ bool DeviceStateMachine::IsValidTransition(DeviceState from, DeviceState to) con
             return to == kDeviceStateConnecting ||
                    to == kDeviceStateListening ||
                    to == kDeviceStateSpeaking ||
+                   to == kDeviceStateNotifying ||
                    to == kDeviceStateActivating ||
                    to == kDeviceStateUpgrading ||
                    to == kDeviceStateWifiConfiguring ||
@@ -95,6 +97,9 @@ bool DeviceStateMachine::IsValidTransition(DeviceState from, DeviceState to) con
             return to == kDeviceStateListening ||
                    to == kDeviceStateIdle||
                    to == kDeviceStateAlarm;
+
+        case kDeviceStateNotifying:
+            return to == kDeviceStateIdle;
 
         case kDeviceStateFatalError:
             // Cannot transition out of fatal error
