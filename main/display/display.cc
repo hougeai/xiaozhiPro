@@ -8,6 +8,7 @@
 #include "assets/lang_config.h"
 #include "audio_codec.h"
 #include "board.h"
+#include "lvgl_display/lvgl_image.h"
 #include "settings.h"
 
 #define TAG "Display"
@@ -15,6 +16,8 @@
 Display::Display() {}
 
 Display::~Display() {}
+
+void Display::SetPreviewImage(std::unique_ptr<LvglImage> image) {}
 
 void Display::SetStatus(const char* status) { ESP_LOGW(TAG, "SetStatus: %s", status); }
 
@@ -28,7 +31,11 @@ void Display::ShowNotification(const char* notification, int duration_ms) {
 
 void Display::UpdateStatusBar(bool update_all) {}
 
-void Display::SetEmotion(const char* emotion) { ESP_LOGW(TAG, "SetEmotion: %s", emotion); }
+bool Display::SetEmotion(const char* emotion) {
+    // The base class has nothing to render with, so the emotion was never set.
+    ESP_LOGW(TAG, "SetEmotion: %s", emotion);
+    return false;
+}
 
 void Display::SetChatMessage(const char* role, const char* content) {
     ESP_LOGW(TAG, "Role:%s", role);

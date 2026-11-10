@@ -24,7 +24,7 @@ private:
     lv_obj_t* content_right_ = nullptr;
     lv_obj_t* container_ = nullptr;
     lv_obj_t* side_bar_ = nullptr;
-    lv_obj_t *emotion_label_ = nullptr;
+    lv_obj_t* emotion_label_ = nullptr;
     lv_obj_t* chat_message_label_ = nullptr;
 
     // 添加用于显示天气和时间信息的标签
@@ -49,14 +49,18 @@ private:
     void SetupUI_128x32();
 
 public:
-    OledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel, int width, int height, bool mirror_x, bool mirror_y);
+    OledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel, int width,
+                int height, bool mirror_x, bool mirror_y);
     ~OledDisplay();
 
     virtual void SetupUI() override;
     virtual void SetChatMessage(const char* role, const char* content) override;
-    virtual void SetEmotion(const char* emotion) override;
+    virtual void RemoveChatMessage(const char* role, const char* content) override;
+    virtual bool SetEmotion(const char* emotion) override;
     virtual void SetTheme(Theme* theme) override;
     virtual void UpdateStatusBar(bool update_all = false) override;
+    virtual bool IsMonochrome() const override { return true; }
+    void SetPowerSaveMode(bool on) override;
     // 显示待机信息
     void ShowIdleInfo();
     void HideIdleInfo();
@@ -65,4 +69,4 @@ public:
     void SetLabelScrollSpeed(lv_obj_t* label, int px_per_sec);
 };
 
-#endif // OLED_DISPLAY_H
+#endif  // OLED_DISPLAY_H

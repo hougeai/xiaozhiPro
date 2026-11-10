@@ -2,11 +2,13 @@
 #include "assets/lang_config.h"
 #include "lvgl_font.h"
 #include "lvgl_theme.h"
+#include "settings.h"
 #include "board.h"
 #include "application.h"
 #include "audio_codec.h"
 #include "system_info.h"
 #include "display_utils.h"
+
 #include <algorithm>
 #include <string>
 
@@ -176,6 +178,24 @@ void OledDisplay::SetChatMessage(const char* role, const char* content) {
             lv_label_set_text(chat_message_label_, content_str.c_str());
             lv_obj_remove_flag(content_right_, LV_OBJ_FLAG_HIDDEN);
         }
+    }
+}
+
+void OledDisplay::RemoveChatMessage(const char* role, const char* content) {
+    DisplayLockGuard lock(this);
+    if (chat_message_label_ == nullptr || content == nullptr) {
+        return;
+    }
+    // OLED has one text slot and does not distinguish message roles.
+    std::string content_str = content;
+    std::replace(content_str.begin(), content_str.end(), '\n', ' ');
+    if (content_str != lv_label_get_text(chat_message_label_)) {
+        return;
+    }
+    lv_anim_delete(chat_message_label_, nullptr);
+    lv_label_set_text(chat_message_label_, "");
+    if (content_right_ != nullptr) {
+        lv_obj_add_flag(content_right_, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -426,7 +446,7 @@ void OledDisplay::SetupUI_128x32() {
     }
 }
 
-void OledDisplay::SetEmotion(const char* emotion) {
+bool OledDisplay::SetEmotion(const char* emotion) {
     auto lvgl_theme = static_cast<LvglTheme*>(current_theme_);
     const char* utf8 = noto_emoji_get_utf8(emotion);
     const lv_font_t* emotion_font = lvgl_theme->emoji_font()->font();
@@ -436,15 +456,18 @@ void OledDisplay::SetEmotion(const char* emotion) {
     }
     DisplayLockGuard lock(this);
     if (emotion_label_ == nullptr) {
-        return;
+        return false;
     }
     if (utf8 != nullptr) {
         lv_obj_set_style_text_font(emotion_label_, emotion_font, 0);
         lv_label_set_text(emotion_label_, utf8);
-    } else {
-        lv_obj_set_style_text_font(emotion_label_, lvgl_theme->emoji_font()->font(), 0);
-        lv_label_set_text(emotion_label_, NOTO_EMOJI_NEUTRAL);
+        return true;
     }
+    // Neither font has a glyph for this name, so what is shown is the neutral placeholder and
+    // not the emotion that was asked for.
+    lv_obj_set_style_text_font(emotion_label_, lvgl_theme->emoji_font()->font(), 0);
+    lv_label_set_text(emotion_label_, NOTO_EMOJI_NEUTRAL);
+    return false;
 }
 
 void OledDisplay::SetTheme(Theme* theme) {
@@ -455,6 +478,16 @@ void OledDisplay::SetTheme(Theme* theme) {
 
     auto screen = lv_screen_active();
     lv_obj_set_style_text_font(screen, text_font, 0);
+}
+
+void OledDisplay::SetPowerSaveMode(bool on) {
+    if (panel_) {
+        Settings settings("wifi", false);
+        if (settings.GetBool("power_save_display_off", false)) {
+            esp_lcd_panel_disp_on_off(panel_, !on);
+        }
+    }
+    LvglDisplay::SetPowerSaveMode(on);
 }
 
 void OledDisplay::UpdateStatusBar(bool update_all) {

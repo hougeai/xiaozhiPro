@@ -86,6 +86,7 @@ protected:
     virtual bool SendText(const std::string& text) = 0;
     virtual bool SendTextPro(const std::string& text) { return false; }; // 默认实现
     virtual void SetError(const std::string& message);
+    void SetError(const std::string& message, const std::string& detail);
     virtual bool IsTimeout() const;
     static void AddTextFontCapabilities(cJSON* root);
 };

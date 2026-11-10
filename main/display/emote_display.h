@@ -1,20 +1,29 @@
 #pragma once
 
-#include "display.h"
-#include <memory>
-#include <string>
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
+#include <memory>
+#include <string>
+#include "display.h"
 #include "expression_emote.h"
 
 namespace emote {
 
+// Flush progress, for a board that wants to notice a display which has stopped flushing.
+// GetMicrosecondsSinceLastFlush returns -1 before the first flush, which is not the same
+// answer as a large number.
+uint32_t GetFlushCount();
+int64_t GetMicrosecondsSinceLastFlush();
+
 class EmoteDisplay : public Display {
 public:
-    EmoteDisplay(esp_lcd_panel_handle_t panel, esp_lcd_panel_io_handle_t panel_io, int width, int height);
+    using Display::SetPreviewImage;
+
+    EmoteDisplay(esp_lcd_panel_handle_t panel, esp_lcd_panel_io_handle_t panel_io, int width,
+                 int height);
     virtual ~EmoteDisplay();
 
-    virtual void SetEmotion(const char* emotion) override;
+    virtual bool SetEmotion(const char* emotion) override;
     virtual void SetStatus(const char* status) override;
     virtual void SetChatMessage(const char* role, const char* content) override;
     virtual void SetTheme(Theme* theme) override;
@@ -24,7 +33,11 @@ public:
     virtual void SetPreviewImage(const void* image);
 
     bool StopAnimDialog();
-    bool InsertAnimDialog(const char* emoji_name, uint32_t duration_ms);
+    virtual bool InsertAnimDialog(const char* emoji_name, uint32_t duration_ms) override;
+    virtual bool MountAssets(const char* partition_label) override;
+    virtual void UnmountAssets() override;
+    virtual bool GetAssetData(const std::string& name, const uint8_t*& data, size_t& size) override;
+    virtual void LoadAssets() override;
 
     void RefreshAll();
 
@@ -36,7 +49,6 @@ private:
     virtual void Unlock() override;
 
     emote_handle_t emote_handle_ = nullptr;
-
 };
 
-} // namespace emote
+}  // namespace emote
