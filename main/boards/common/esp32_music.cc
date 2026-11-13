@@ -83,7 +83,6 @@ std::string Esp32Music::SinglePlay(const std::string& song_name, const std::stri
     current_song_name_ = song_name;
     
     // 第一步：请求stream_pcm接口获取音频信息
-    // std::string base_url = "http://www.xiaozhishop.xyz:5005/stream_pcm";
     std::string base_url = std::string(CONFIG_SERVER_URL) + "/device_music";
     std::string full_url = base_url + "?song=" + url_encode(song_name) + "&singer=" + url_encode(artist_name);
     
