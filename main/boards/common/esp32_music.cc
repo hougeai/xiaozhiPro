@@ -11,6 +11,7 @@
 #include <esp_timer.h>
 #include <cJSON.h>
 #include <cstring>
+#include <cstdlib>
 #include <chrono>
 #include <sstream>
 #include <algorithm>
@@ -104,7 +105,7 @@ std::string Esp32Music::SinglePlay(const std::string& song_name, const std::stri
     }
     
     // 检查响应状态码
-    int status_code = http->GetStatusCode();
+    int status_code = http->GetStatusCode().value_or(0);
     std::string response = http->ReadAll();
     http->Close();
     if (status_code != 200) {
@@ -189,7 +190,7 @@ std::string Esp32Music::SinglePlay(const std::string& song_name, const std::stri
                             delete args;
                             vTaskDelete(nullptr);
                         },
-                        "lyric_dl", 4096,
+                        "lyric_dl", 12288,
                         new std::pair<Esp32Music*, std::string>(this, current_lyric_url_), 4, nullptr);
                 } else {
                     ESP_LOGW(TAG, "No lyric URL found for this song");
@@ -248,7 +249,7 @@ bool Esp32Music::StartStreaming(const std::string& music_url) {
         music->DownloadAudioStream(music->streaming_url_);
         music->download_task_finished_ = true;
         vTaskDelete(NULL);
-    }, "MusicDownload", 8192, this, 5, &download_task_handle_);
+    }, "MusicDownload", 12288, this, 5, &download_task_handle_);
     
     if (download_task_ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create download task");
@@ -386,15 +387,15 @@ void Esp32Music::DownloadAudioStream(const std::string& music_url) {
         std::string range_hdr = "bytes=" + std::to_string(resume_from) + "-";
         http->SetHeader("Range", range_hdr);
         ESP_LOGI(TAG, "Retry %d/%d  Range: %s", retry_count + 1, max_retries, range_hdr.c_str());
-        if (!http->Open("GET", music_url)) {
-            int last_err = http->GetLastError();
-            ESP_LOGE(TAG, "Failed to connect to music stream URL (attempt %d/%d), last_err=0x%04X",
-                     retry_count + 1, max_retries, (unsigned)last_err & 0xFFFF);
+        if (auto opened = http->Open("GET", music_url); !opened) {
+            ESP_LOGE(TAG, "Failed to connect to music stream URL (attempt %d/%d), err=%s",
+                     retry_count + 1, max_retries, opened.error().ToString().c_str());
             http->Close();
             // 连接层硬失败（如 TLS 握手被 RST）：重试必失败，直接放弃
-            if (IsConnectionHardFail(last_err)) {
+            // NetworkError.native 保留底层 esp/mbedtls 错误码，硬失败判断逻辑不变
+            if (IsConnectionHardFail(opened.error().native)) {
                 ESP_LOGE(TAG, "Connection-layer hard failure (0x%04X), giving up immediately",
-                         (unsigned)last_err & 0xFFFF);
+                         (unsigned)opened.error().native & 0xFFFF);
                 download_success = false;
                 break;
             }
@@ -404,7 +405,7 @@ void Esp32Music::DownloadAudioStream(const std::string& music_url) {
             }
             continue;
         }
-        int status_code = http->GetStatusCode();
+        int status_code = http->GetStatusCode().value_or(0);
         if (status_code != 200 && status_code != 206) {  // 206 for partial content
             ESP_LOGE(TAG, "HTTP GET failed with status code: %d (attempt %d/%d)", status_code, retry_count + 1, max_retries);
             http->Close();
@@ -432,7 +433,7 @@ void Esp32Music::DownloadAudioStream(const std::string& music_url) {
         char buffer[chunk_size]; // 循环使用的临时缓冲区
         // 只有当下载和播放都处于活动状态时才继续，如果用户停止播放||下载错误，都停止下载
         while (is_downloading_ && is_playing_) {
-            int bytes_read = http->Read(buffer, chunk_size);
+            int bytes_read = http->Read(buffer, chunk_size).value_or(-1);
             if (bytes_read < 0) {
                 // 读取出错（连接被对端关闭/超时），视为异常断开，尝试断点续传
                 resume_from = total_downloaded_;
@@ -866,7 +867,7 @@ bool Esp32Music::DownloadLyrics(const std::string& lyric_url) {
         return false;
     }
     
-    int status_code = http->GetStatusCode();
+    int status_code = http->GetStatusCode().value_or(0);
     if (status_code != 200) {
         ESP_LOGW(TAG, "Lyric download failed with status: %d", status_code);
         http->Close();
@@ -934,31 +935,27 @@ bool Esp32Music::ParseLyrics(const std::string& lyric_content) {
                         continue;
                     }
                     
-                    // 是时间格式，解析时间戳
-                    try {
-                        int minutes = std::stoi(tag_or_time.substr(0, colon_pos));
-                        float seconds = std::stof(tag_or_time.substr(colon_pos + 1));
-                        int timestamp_ms = minutes * 60 * 1000 + (int)(seconds * 1000);
-                        
-                        // 安全处理歌词文本，确保UTF-8编码正确
-                        std::string safe_lyric_text;
-                        if (!content.empty()) {
-                            // 创建安全副本并验证字符串
-                            safe_lyric_text = content;
-                            // 确保字符串以null结尾
-                            safe_lyric_text.shrink_to_fit();
-                        }
-                        
-                        lyrics_.push_back(std::make_pair(timestamp_ms, safe_lyric_text));
-                        
-                        if (!safe_lyric_text.empty()) {
-                            // 限制日志输出长度，避免中文字符截断问题
-                            size_t log_len = std::min(safe_lyric_text.length(), size_t(50));
-                            std::string log_text = safe_lyric_text.substr(0, log_len);
-                            ESP_LOGI(TAG, "Parsed lyric: [%d ms] %s", timestamp_ms, log_text.c_str());
-                        }
-                    } catch (const std::exception& e) {
-                        ESP_LOGW(TAG, "Failed to parse time: %s", tag_or_time.c_str());
+                    // 是时间格式，解析时间戳（项目禁用 C++ 异常，改用 atoi/strtof，解析失败得 0）
+                    int minutes = atoi(tag_or_time.substr(0, colon_pos).c_str());
+                    float seconds = strtof(tag_or_time.substr(colon_pos + 1).c_str(), nullptr);
+                    int timestamp_ms = minutes * 60 * 1000 + (int)(seconds * 1000);
+                    
+                    // 安全处理歌词文本，确保UTF-8编码正确
+                    std::string safe_lyric_text;
+                    if (!content.empty()) {
+                        // 创建安全副本并验证字符串
+                        safe_lyric_text = content;
+                        // 确保字符串以null结尾
+                        safe_lyric_text.shrink_to_fit();
+                    }
+                    
+                    lyrics_.push_back(std::make_pair(timestamp_ms, safe_lyric_text));
+                    
+                    if (!safe_lyric_text.empty()) {
+                        // 限制日志输出长度，避免中文字符截断问题
+                        size_t log_len = std::min(safe_lyric_text.length(), size_t(50));
+                        std::string log_text = safe_lyric_text.substr(0, log_len);
+                        ESP_LOGI(TAG, "Parsed lyric: [%d ms] %s", timestamp_ms, log_text.c_str());
                     }
                 }
             }
@@ -1098,7 +1095,7 @@ void Esp32Music::SendPlayHistory(int song_id) {
 
             while (retry_count < max_retries && !success) {
                 if (http->Open("POST", url)) {
-                    int status_code = http->GetStatusCode();
+                    int status_code = http->GetStatusCode().value_or(0);
                     if (status_code == 200) {
                         http->ReadAll();  // 消费响应体，避免 Close 时底层报 "expected N bytes" 提前断连告警
                         ESP_LOGI(TAG, "Successfully sent play history for song ID: %d", song_id);
@@ -1121,7 +1118,7 @@ void Esp32Music::SendPlayHistory(int song_id) {
             vTaskDelete(nullptr);
         },
         "SendPlayHistoryTask",
-        4096,
+        12288,
         reinterpret_cast<void*>(song_id),  // 直接传 song_id
         tskIDLE_PRIORITY + 1, // 比空闲任务高一个优先级，用于不需要高优先级的后台任务
         nullptr
@@ -1162,7 +1159,7 @@ std::string Esp32Music::LoopPlay(const std::string& mode) {
             return "Failed to connect to music collection API";
         }
 
-        int status_code = http->GetStatusCode();
+        int status_code = http->GetStatusCode().value_or(0);
         std::string response = http->ReadAll();
         cJSON* root = cJSON_Parse(response.c_str());
         http->Close();
@@ -1283,11 +1280,8 @@ void Esp32Music::LoopPlayTask() {
             lyric_url  = current_song["lyric_url"];
             song_name  = current_song["song"];
             singer_name = current_song["singer"];
-            try {
-                song_id = std::stoi(current_song["song_id"]);
-            } catch (const std::exception& e) {
-                song_id = 0;
-            }
+            // 项目禁用 C++ 异常：atoi 解析失败返回 0，与原 catch 语义一致
+            song_id = atoi(current_song["song_id"].c_str());
             next_index = (idx + 1) % music_collection_.size();
             ESP_LOGI(TAG, "Playing song %d/%d: %s - %s quota: %d",
                      idx + 1, music_collection_.size(),
@@ -1314,7 +1308,7 @@ void Esp32Music::LoopPlayTask() {
                         delete args;
                         vTaskDelete(nullptr);
                     },
-                    "loop_lyric_dl", 4096, lyric_args, 4, nullptr);
+                    "loop_lyric_dl", 12288, lyric_args, 4, nullptr);
             }
 
             // 等待当前歌曲播放完成
@@ -1405,7 +1399,7 @@ std::string Esp32Music::PlayNextSong() {
             music->LoopPlay("loop");
             vTaskDelete(nullptr);
         },
-        "music_next_song", 8192, self, 5, nullptr);
+        "music_next_song", 12288, self, 5, nullptr);
 
     return "";
 }

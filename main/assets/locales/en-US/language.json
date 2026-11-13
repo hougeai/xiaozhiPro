@@ -42,6 +42,7 @@
         "UPGRADING": "System is upgrading...",
         "UPGRADE_FAILED": "Upgrade failed",
         "ACTIVATION": "Activation",
+        "ALARM": "Alarm: ",
         "BATTERY_LOW": "Low battery",
         "BATTERY_CHARGING": "Charging",
         "BATTERY_FULL": "Battery full",

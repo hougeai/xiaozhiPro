@@ -54,7 +54,7 @@ public:
     ~CustomOledDisplay();
 
     virtual void SetChatMessage(const char* role, const char* content) override;
-    virtual void SetEmotion(const char* emotion) override;
+    virtual bool SetEmotion(const char* emotion) override;
     virtual void SetTheme(Theme* theme) override;
     virtual void UpdateStatusBar(bool update_all = false) override;
     // 显示待机信息

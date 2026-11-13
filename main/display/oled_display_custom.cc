@@ -379,22 +379,24 @@ void CustomOledDisplay::SetupUI_128x32() {
 }
 
 // 根据传入的 emotion 字符串获取对应的 FontAwesome 图标并设置到 emotion_label_
-void CustomOledDisplay::SetEmotion(const char* emotion) {
+bool CustomOledDisplay::SetEmotion(const char* emotion) {
     const char* utf8 = noto_emoji_get_utf8(emotion);
     DisplayLockGuard lock(this);
     if (emotion_label_ == nullptr) {
-        return;
+        return false;
     }
     if (utf8 != nullptr) {
         lv_label_set_text(emotion_label_, utf8);
-    } else {
-        utf8 = material_symbols_get_utf8(emotion);
-        if (utf8 != nullptr) {
-            lv_label_set_text(emotion_label_, utf8);
-        } else {
-            lv_label_set_text(emotion_label_, MATERIAL_SYMBOLS_ROBOT_2);
-        }
+        return true;
     }
+    utf8 = material_symbols_get_utf8(emotion);
+    if (utf8 != nullptr) {
+        lv_label_set_text(emotion_label_, utf8);
+        return true;
+    }
+    // 两个字体都没有该表情的字形，显示中性占位（robot），而非用户要求的表情
+    lv_label_set_text(emotion_label_, MATERIAL_SYMBOLS_ROBOT_2);
+    return false;
 }
 
 // 根据传入的主题设置屏幕文本字体
@@ -681,7 +683,7 @@ void CustomOledDisplay::LoadIdleInfoSettings() {
     ESP_LOGI(TAG, "Fetching display info from: %s", url.c_str());
     
     if (http->Open("GET", url)) {
-        int status_code = http->GetStatusCode();
+        int status_code = http->GetStatusCode().value_or(0);
         if (status_code == 200) {
             std::string response = http->ReadAll();
             ESP_LOGI(TAG, "Successfully fetched display info");

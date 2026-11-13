@@ -1614,7 +1614,7 @@ void Application::FlushConversationQueue() {
         
         while (retry_count < max_retries && !success) {
             if (http->Open("POST", url)) {
-                int status_code = http->GetStatusCode();
+                int status_code = http->GetStatusCode().value_or(0);
                 http->ReadAll();  // 消费响应体，避免 Close 时底层报 "expected N bytes" 提前断连告警（200 与非 200 都需读取）
                 if (status_code == 200) {
                     ESP_LOGI(TAG, "Successfully sent %d conversations to server", temp_queue.size());

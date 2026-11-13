@@ -2,13 +2,13 @@ menu "Xiaozhi Assistant"
 
 config SERVER_URL
     string "XiaozhiPro Server URL"
-    default "https://upldapuxqzmh.sealosbja.site"
+    default "https://api.qlcloud.top/xzp"
     help
         The base URL for XiaozhiPro server including upload_conversations and get_code endpoints
 
 config OTA_URL
     string "Default OTA URL"
-    default "https://upldapuxqzmh.sealosbja.site/ota"
+    default "https://api.qlcloud.top/xzp/ota"
     help
         The application will access this URL to check for new firmwares and server address.
 

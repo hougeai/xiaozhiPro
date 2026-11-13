@@ -887,12 +887,18 @@ bool AudioService::InitializeAudioEngine() {
 
 
 void AudioService::PlayExternalPcmData(std::vector<int16_t>&& pcm_data, uint32_t timestamp) {
-    auto task = std::make_unique<AudioTask>();
-    task->type = kAudioTaskTypeDecodeToPlaybackQueue;
-    task->pcm = std::move(pcm_data);
-    task->timestamp = timestamp;
-    
-    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+    // 播放队列元素已改为 AudioTask 按值存储（main 重构），不再用 unique_ptr
+    AudioTask task;
+    task.type = kAudioTaskTypeDecodeToPlaybackQueue;
+    task.pcm = std::move(pcm_data);
+    task.timestamp = timestamp;
+
+    std::unique_lock<std::mutex> lock(audio_queue_mutex_);
+    // 播放队列是容量 2 的 FixedQueue，push_back 满时返回 false 并静默丢帧。
+    // 外部 PCM 生产速度远快于实时播放，必须阻塞等待消费端出队，否则音频丢帧。
+    audio_queue_cv_.wait(lock, [this]() {
+        return service_stopped_.load() || !audio_playback_queue_.full();
+    });
     audio_playback_queue_.push_back(std::move(task));
     audio_queue_cv_.notify_all();
 }

@@ -335,8 +335,8 @@ bool WebsocketProtocol::StartMqttProClient() {
         cJSON_Delete(root);
     });
 
-    if (!mqtt_pro_->Connect(endpoint, port, client_id, username, password)) {
-        ESP_LOGE(TAG, "Failed to connect to mqtt pro endpoint, code=%d", mqtt_pro_->GetLastError());
+    if (auto connected = mqtt_pro_->Connect(endpoint, port, client_id, username, password); !connected) {
+        ESP_LOGE(TAG, "Failed to connect to mqtt pro endpoint: %s", connected.error().ToString().c_str());
         return false;
     }
 

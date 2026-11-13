@@ -26,7 +26,7 @@ void display_utils::LoadIdleInfoSettings(std::string* idle_info_texts, std::vect
     // ESP_LOGI(TAG, "Fetching display info from: %s", url.c_str());
     
     if (http->Open("GET", url)) {
-        int status_code = http->GetStatusCode();
+        int status_code = http->GetStatusCode().value_or(0);
         if (status_code == 200) {
             std::string response = http->ReadAll();
             ESP_LOGI(TAG, "Successfully fetched display info");

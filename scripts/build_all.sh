@@ -2,7 +2,7 @@
 # export https_proxy=http://127.0.0.1:8123
 # 检查是否已经安装了 ESP-IDF 环境
 if [ -z "$IDF_PATH" ]; then
-    source ~/esp/v6.0.2/esp-idf/export.sh
+    source ~/esp/v6.1/esp-idf/export.sh
 fi
 
 # 设置日志文件

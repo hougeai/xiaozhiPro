@@ -127,7 +127,9 @@ void McpServer::AddCommonTools() {
     // an undefined-reference link error on ESP32 builds.
 #if !defined(CONFIG_IDF_TARGET_ESP32)
     auto led = board.GetManualLed();
-    auto gpio_led = dynamic_cast<GpioLed*>(led);
+    // 项目禁用 RTTI（-fno-rtti），不能用 dynamic_cast；GetManualLed 的所有实现均返回
+    // GpioLed（或基类默认的 nullptr），static_cast 即可，下方 if (gpio_led) 已兜底空指针。
+    auto gpio_led = static_cast<GpioLed*>(led);
     if (gpio_led) {
         AddTool("self.led.turn_on",
             "Turn on the built-in LED",
@@ -189,7 +191,7 @@ void McpServer::AddCommonTools() {
                 ESP_LOGE(TAG, "Failed to open HTTP connection");
                 return R"({"success":false,"message":"Failed to connect to knowledge base"})";
             }
-            int status_code = http->GetStatusCode();
+            int status_code = http->GetStatusCode().value_or(0);
             std::string response = http->ReadAll();
             // ESP_LOGI(TAG, "kb.query response: %s", response.c_str());
             cJSON* root = cJSON_Parse(response.c_str());
@@ -241,7 +243,7 @@ void McpServer::AddCommonTools() {
                 ESP_LOGE(TAG, "Failed to open HTTP connection");
                 return R"({"success":false,"message":"Failed to connect to kb"})";
             }
-            int status_code = http->GetStatusCode();
+            int status_code = http->GetStatusCode().value_or(0);
             std::string response = http->ReadAll();
             // ESP_LOGI(TAG, "Mem response: %s", response.c_str());
             cJSON* root = cJSON_Parse(response.c_str());
@@ -312,7 +314,7 @@ void McpServer::AddCommonTools() {
                 ESP_LOGE(TAG, "Failed to open HTTP connection");
                 return R"({"success":false,"message":"Failed to connect to mem"})";
             }
-            int status_code = http->GetStatusCode();
+            int status_code = http->GetStatusCode().value_or(0);
             std::string response = http->ReadAll();
             // ESP_LOGI(TAG, "Mem response: %s", response.c_str());
             cJSON* root = cJSON_Parse(response.c_str());
@@ -376,7 +378,7 @@ void McpServer::AddCommonTools() {
                 ESP_LOGE(TAG, "Failed to open HTTP connection");
                 return R"({"success":false,"message":"Failed to connect to vision"})";
             }
-            int status_code = http->GetStatusCode();
+            int status_code = http->GetStatusCode().value_or(0);
             std::string response = http->ReadAll();
             // ESP_LOGI(TAG, "Mem response: %s", response.c_str());
             cJSON* root = cJSON_Parse(response.c_str());
@@ -440,7 +442,7 @@ void McpServer::AddCommonTools() {
                 ESP_LOGE(TAG, "Failed to open HTTP connection");
                 return R"({"success":false,"message":"Failed to connect to openclaw"})";
             }
-            int status_code = http->GetStatusCode();
+            int status_code = http->GetStatusCode().value_or(0);
             std::string response = http->ReadAll();
             // ESP_LOGI(TAG, "openclaw.send response: %s", response.c_str());
             cJSON* root = cJSON_Parse(response.c_str());
@@ -492,7 +494,7 @@ void McpServer::AddCommonTools() {
                 ESP_LOGE(TAG, "Failed to open HTTP connection");
                 return R"({"success":false,"message":"Failed to connect to openclaw"})";
             }
-            int status_code = http->GetStatusCode();
+            int status_code = http->GetStatusCode().value_or(0);
             std::string response = http->ReadAll();
             // ESP_LOGI(TAG, "openclaw.retrieve response: %s", response.c_str());
             cJSON* root = cJSON_Parse(response.c_str());
@@ -556,7 +558,7 @@ void McpServer::AddCommonTools() {
                 ESP_LOGE(TAG, "Failed to open HTTP connection");
                 return R"({"success":false,"message":"Failed to connect to hermes"})";
             }
-            int status_code = http->GetStatusCode();
+            int status_code = http->GetStatusCode().value_or(0);
             std::string response = http->ReadAll();
             // ESP_LOGI(TAG, "hermes.send response: %s", response.c_str());
             cJSON* root = cJSON_Parse(response.c_str());
@@ -608,7 +610,7 @@ void McpServer::AddCommonTools() {
                 ESP_LOGE(TAG, "Failed to open HTTP connection");
                 return R"({"success":false,"message":"Failed to connect to hermes"})";
             }
-            int status_code = http->GetStatusCode();
+            int status_code = http->GetStatusCode().value_or(0);
             std::string response = http->ReadAll();
             // ESP_LOGI(TAG, "hermes.retrieve response: %s", response.c_str());
             cJSON* root = cJSON_Parse(response.c_str());
@@ -661,7 +663,7 @@ void McpServer::AddCommonTools() {
                 ESP_LOGE(TAG, "Failed to open HTTP connection");
                 return R"({"success":false,"message":"Failed to connect to HA"})";
             }
-            int status_code = http->GetStatusCode();
+            int status_code = http->GetStatusCode().value_or(0);
             std::string response = http->ReadAll();
             cJSON* root = cJSON_Parse(response.c_str());
             http->Close();
@@ -711,7 +713,7 @@ void McpServer::AddCommonTools() {
                 ESP_LOGE(TAG, "Failed to open HTTP connection");
                 return R"({"success":false,"message":"Failed to connect to HA"})";
             }
-            int status_code = http->GetStatusCode();
+            int status_code = http->GetStatusCode().value_or(0);
             std::string response = http->ReadAll();
             cJSON* root = cJSON_Parse(response.c_str());
             http->Close();
@@ -791,7 +793,7 @@ void McpServer::AddCommonTools() {
                 ESP_LOGE(TAG, "Failed to open HTTP connection");
                 return R"({"success":false,"message":"Failed to connect to HA"})";
             }
-            int status_code = http->GetStatusCode();
+            int status_code = http->GetStatusCode().value_or(0);
             std::string response = http->ReadAll();
             cJSON* root = cJSON_Parse(response.c_str());
             http->Close();
@@ -976,7 +978,7 @@ void McpServer::AddCommonTools() {
                 return R"({"success":false,"message":"Failed to connect to the server"})";
             }
 
-            int status_code = http->GetStatusCode();
+            int status_code = http->GetStatusCode().value_or(0);
             std::string response = http->ReadAll();
             cJSON* root = cJSON_Parse(response.c_str());
             http->Close();
@@ -1138,7 +1140,7 @@ void McpServer::AddCommonTools() {
                 ESP_LOGE(TAG, "Failed to open HTTP connection");
                 return R"({"success":false,"message":"Failed to connect to the server"})";
             }
-            auto status_code = http->GetStatusCode();
+            int status_code = http->GetStatusCode().value_or(0);
             if (status_code != 200) {
                 ESP_LOGE(TAG, "request failed with status code: %d", status_code);
                 return R"({"success":false,"message":"request failed"})";
@@ -1828,43 +1830,39 @@ void McpServer::DoToolCallPro(int id, const std::string& tool_name, const cJSON*
     }
 
     PropertyList arguments = (*tool_iter)->properties();
-    try {
-        for (auto& argument : arguments) {
-            bool found = false;
-            if (cJSON_IsObject(tool_arguments)) {
-                auto value = cJSON_GetObjectItem(tool_arguments, argument.name().c_str());
-                if (argument.type() == kPropertyTypeBoolean && cJSON_IsBool(value)) {
-                    argument.set_value<bool>(value->valueint == 1);
-                    found = true;
-                } else if (argument.type() == kPropertyTypeInteger && cJSON_IsNumber(value)) {
-                    argument.set_value<int>(value->valueint);
-                    found = true;
-                } else if (argument.type() == kPropertyTypeString && cJSON_IsString(value)) {
-                    argument.set_value<std::string>(value->valuestring);
-                    found = true;
-                }
-            }
-
-            if (!argument.has_default_value() && !found) {
-                ESP_LOGE(TAG, "tools/call: Missing valid argument: %s", argument.name().c_str());
-                ReplyErrorPro(id, "Missing valid argument: " + argument.name());
-                return;
+    // 项目禁用 C++ 异常（-fno-exceptions），参数校验与工具调用不使用 try/catch
+    for (auto& argument : arguments) {
+        bool found = false;
+        if (cJSON_IsObject(tool_arguments)) {
+            auto value = cJSON_GetObjectItem(tool_arguments, argument.name().c_str());
+            if (argument.type() == kPropertyTypeBoolean && cJSON_IsBool(value)) {
+                argument.set_value<bool>(value->valueint == 1);
+                found = true;
+            } else if (argument.type() == kPropertyTypeInteger && cJSON_IsNumber(value)) {
+                argument.set_value<int>(value->valueint);
+                found = true;
+            } else if (argument.type() == kPropertyTypeString && cJSON_IsString(value)) {
+                argument.set_value<std::string>(value->valuestring);
+                found = true;
             }
         }
-    } catch (const std::exception& e) {
-        ESP_LOGE(TAG, "tools/call: %s", e.what());
-        ReplyErrorPro(id, e.what());
-        return;
+
+        if (!argument.has_default_value() && !found) {
+            ESP_LOGE(TAG, "tools/call: Missing valid argument: %s", argument.name().c_str());
+            ReplyErrorPro(id, "Missing valid argument: " + argument.name());
+            return;
+        }
     }
 
     // Use main thread to call the tool
     auto& app = Application::GetInstance();
     app.Schedule([this, id, tool_iter, arguments = std::move(arguments)]() {
-        try {
-            ReplyResultPro(id, (*tool_iter)->Call(arguments));
-        } catch (const std::exception& e) {
-            ESP_LOGE(TAG, "tools/call: %s", e.what());
-            ReplyErrorPro(id, e.what());
+        // Call 返回 std::expected<std::string, std::string>（main 新工具契约）
+        auto result = (*tool_iter)->Call(arguments);
+        if (result) {
+            ReplyResultPro(id, *result);
+        } else {
+            ReplyErrorPro(id, result.error());
         }
     });
 }

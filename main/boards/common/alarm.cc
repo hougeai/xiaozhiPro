@@ -299,7 +299,7 @@ void AlarmManager::SyncAlarmsToCloudAsync(std::vector<std::pair<Alarm, std::stri
         delete ctx;
         vTaskDelete(nullptr);
     };
-    if (xTaskCreate(task, "alarm_cloud_sync", 8192, ctx, 1, nullptr) != pdPASS) {
+    if (xTaskCreate(task, "alarm_cloud_sync", 12288, ctx, 1, nullptr) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create alarm cloud sync task");
         delete ctx;
     }
@@ -517,7 +517,7 @@ std::string AlarmManager::SyncAlarmToCloud(const Alarm& alarm, const std::string
         return "Failed to connect to alarm sync server";
     }
     
-    int status_code = http->GetStatusCode();
+    int status_code = http->GetStatusCode().value_or(0);
     std::string response = http->ReadAll();
     http->Close();
     if (status_code != 200) {
@@ -560,7 +560,7 @@ std::string AlarmManager::ClearCloudAlarms() {
         return "Failed to connect to alarm sync server";
     }
     
-    int status_code = http->GetStatusCode();
+    int status_code = http->GetStatusCode().value_or(0);
     std::string response = http->ReadAll();
     http->Close();
     if (status_code != 200) {
@@ -596,7 +596,7 @@ std::string AlarmManager::SyncAlarmFromCloud(std::vector<Alarm>& out_alarms,
         return "Failed to connect to alarm sync server";
     }
 
-    int status_code = http->GetStatusCode();
+    int status_code = http->GetStatusCode().value_or(0);
     std::string response = http->ReadAll();
     http->Close();
     cJSON* root = cJSON_Parse(response.c_str());
