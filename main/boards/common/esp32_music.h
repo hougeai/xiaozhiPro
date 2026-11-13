@@ -73,8 +73,10 @@ private:
     std::mutex buffer_mutex_;
     std::condition_variable buffer_cv_;
     size_t buffer_size_ = 0;
-    static constexpr size_t MAX_BUFFER_SIZE = 64 * 1024;  // 256KB缓冲区（降低以减少brownout风险）
-    static constexpr size_t MIN_BUFFER_SIZE = 16 * 1024;   // 32KB最小播放缓冲（降低以减少brownout风险）
+    // 下载预缓冲容量，断连重连可在 1 秒内恢复，64KB（约 2.5 秒存量）块内存全部在 PSRAM 分配，不占内部 RAM。
+    static constexpr size_t MAX_BUFFER_SIZE = 64 * 1024;
+    // 起播门限：源吞吐充裕，16KB（约 0.6 秒存量）即可起播，缩短点歌后的等待时间。
+    static constexpr size_t MIN_BUFFER_SIZE = 16 * 1024;
     static constexpr size_t AUDIO_BUFFER_SIZE = 8192;
     // MP3解码器相关
     HMP3Decoder mp3_decoder_;

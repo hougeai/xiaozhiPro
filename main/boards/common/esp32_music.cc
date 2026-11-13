@@ -9,6 +9,7 @@
 #include <esp_heap_caps.h>
 #include <esp_pthread.h>
 #include <esp_timer.h>
+#include <esp_wifi.h>  // esp_wifi_sta_get_ap_info：下载诊断日志读取 RSSI
 #include <cJSON.h>
 #include <cstring>
 #include <cstdlib>
@@ -152,47 +153,19 @@ std::string Esp32Music::SinglePlay(const std::string& song_name, const std::stri
                 current_music_url_ = audio_url->valuestring;
                 current_song_id_ = song_id ? song_id->valueint : 0; 
                 song_name_displayed_ = false;  // 重置歌名显示标志
-                if (!StartStreaming(current_music_url_)) {
-                    ESP_LOGE(TAG, "Failed to start streaming playback");
-                    return "音乐连接流式播放失败";
-                }
-                // 处理歌词URL（异步下载，不阻塞起播）
+                // 歌词在启动音频流之前串行下载：此时 WiFi 空闲，连接条件和音频一样可靠；
+                // 音频占满链路时再并发发起第二条 TLS 连接会偶发挂死（esp-tls 连接无超时）。
+                // 失败只打警告，不影响播放。
                 if (cJSON_IsString(lyric_url) && lyric_url->valuestring && strlen(lyric_url->valuestring) > 0) {
                     current_lyric_url_ = lyric_url->valuestring;
                     ESP_LOGI(TAG, "Loading lyrics for: %s", song_name.c_str());
-                    xTaskCreate(
-                        [](void* param) {
-                            auto* args = static_cast<std::pair<Esp32Music*, std::string>*>(param);
-                            Esp32Music* self = args->first;
-                            const std::string& url = args->second;
-                            // 方案A：错峰下载歌词，避免与音频 HTTPS 握手并发抢占 CPU/WiFi。
-                            // 等音频下载达到安全水位（256KB）或已开始播放，再发起歌词请求；
-                            // 设置最大等待上限，确保弱网下歌词仍会出现。
-                            constexpr size_t kLyricSafeThreshold = 256 * 1024;
-                            constexpr uint32_t kLyricMaxWaitMs = 8000;
-                            uint32_t waited = 0;
-                            while (waited < kLyricMaxWaitMs) {
-                                if (!self->is_playing_.load() && !self->is_downloading_.load()) {
-                                    break;  // 播放已停止，无需再下
-                                }
-                                if (self->total_downloaded_ >= kLyricSafeThreshold) {
-                                    break;  // 音频已稳定，可以错峰发起歌词连接
-                                }
-                                vTaskDelay(pdMS_TO_TICKS(200));
-                                waited += 200;
-                            }
-                            if (self->is_playing_.load() || self->is_downloading_.load()) {
-                                ESP_LOGI(TAG, "Lyric download deferred %u ms, starting now (downloaded=%u)",
-                                         waited, (unsigned)self->total_downloaded_);
-                                self->DownloadLyrics(url);
-                            }
-                            delete args;
-                            vTaskDelete(nullptr);
-                        },
-                        "lyric_dl", 12288,
-                        new std::pair<Esp32Music*, std::string>(this, current_lyric_url_), 4, nullptr);
+                    DownloadLyrics(current_lyric_url_);
                 } else {
                     ESP_LOGW(TAG, "No lyric URL found for this song");
+                }
+                if (!StartStreaming(current_music_url_)) {
+                    ESP_LOGE(TAG, "Failed to start streaming playback");
+                    return "音乐连接流式播放失败";
                 }
                 cJSON_Delete(response_json);
                 return "";
@@ -373,6 +346,9 @@ void Esp32Music::DownloadAudioStream(const std::string& music_url) {
     bool download_success = false;
     int  content_length   = -1;          // 服务器给出的总长度
     int  resume_from      = total_downloaded_; // 下次续传起点
+    // 进度日志辅助量：用于计算相邻进度点之间的下载速率
+    int     last_progress_bytes = total_downloaded_;
+    int64_t last_progress_us    = esp_timer_get_time();
     while (retry_count < max_retries && !download_success && is_downloading_ && is_playing_) {
         ESP_LOGI(TAG, "DownloadAudioStream target URL: %s", music_url.c_str());
         auto http = network->CreateHttp(0);
@@ -494,8 +470,24 @@ void Esp32Music::DownloadAudioStream(const std::string& music_url) {
                     buffer_size_ += bytes_read;
                     total_downloaded_ += bytes_read;
                     buffer_cv_.notify_one(); // 只唤醒一个线程，all 是唤醒所有线程；假设缓冲区之前已满，只有下载线程在等待，假设缓冲区之前为空，只有播放线程在等待
-                    if (total_downloaded_ % (128 * 1024) == 0) {  // 每256KB打印一次进度
-                        ESP_LOGI(TAG, "Downloaded %d bytes, buffer size: %d", total_downloaded_, buffer_size_);
+                    if (total_downloaded_ % (128 * 1024) == 0) {  // 每128KB打印一次进度
+                        // 打印相邻进度点间的实际下载速率与 RSSI，用于定位
+                        // "吞吐塌陷→播放饥饿"类卡顿：速率低于播放码率(~26KB/s)
+                        // 即为链路瓶颈，RSSI 骤降则指向射频/供电问题。
+                        int64_t now_us = esp_timer_get_time();
+                        int64_t dt_us = now_us - last_progress_us;
+                        int rate_kbps = dt_us > 0
+                            ? (int)((total_downloaded_ - last_progress_bytes) * 8 / (dt_us / 1000))
+                            : 0;
+                        last_progress_bytes = total_downloaded_;
+                        last_progress_us = now_us;
+                        int rssi = 0;
+                        wifi_ap_record_t ap_info;
+                        if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+                            rssi = ap_info.rssi;
+                        }
+                        ESP_LOGI(TAG, "Downloaded %d bytes, buffer size: %d, rate: %d kbps, rssi: %d",
+                                 total_downloaded_, buffer_size_, rate_kbps, rssi);
                     }
                 } else {
                     heap_caps_free(chunk_data);
