@@ -5,12 +5,13 @@
 - **项目名称**：小智Pro
 - **项目简介**：利用 MCP，为小智 AI 接入三头六臂，打造您身边的全能 AI 助手。🤖
 
-本项目提供Pro版固件（免费）：基于小智AI开源固件，扩展设备端能力。🔧
+基于 [小智AI](https://github.com/78/xiaozhi-esp32) 开源固件扩展设备端能力：固件直接下载烧录即用，源码同步开源，支持定制化开发。🔧
+- 固件下载：[Releases](https://github.com/hougeai/xiaozhiPro/releases)
+- 源码仓库：[dev 分支](https://github.com/hougeai/xiaozhiPro/tree/dev)
 
 更多精彩内容，欢迎关注公众号：猴哥的AI知识库
 
 ![猴哥的AI知识库](gzh.png)
-
 
 ## 产品功能
 
@@ -72,8 +73,19 @@
 
 #### OpenClaw控制 🦾
 
-- 平台打通了和`openclaw`的通信
-- 支持用户接入自己的`openclaw`，并在设备端通过语音指挥`openclaw`
+- 平台打通了和 `openclaw` 的通信
+- 支持用户接入自己的 `openclaw` ，并在设备端通过语音指挥 `openclaw`
+
+#### Hermes控制
+- 平台打通了和 `Hermes` 的通信
+- 支持用户接入自己的 `Hermes`，并在设备端通过语音指挥 `Hermes`
+
+#### 智能家居HA控制
+- 平台打通了和 `Home Assistant` 的通信
+- 支持用户接入自己的 `Home Assistant`，并在设备端通过语音指挥全屋智能设备
+
+#### 远程控制API
+- 平台提供一套完整的远程控制设备 API 接口，支持设备唤醒、重启等功能
 
 ## 产品特性
 
@@ -84,186 +96,19 @@
 - **灵活配置**：支持多种接入点配置，适应不同使用场景
 - **计划升级**：未来将支持更多高级功能
 
+完整版本更新日志，请移步官方文档：https://xzp.qlcloud.top/docs/cn/user/release.html
+
 ## 安装使用 🛠️
 
 三步走：
 
 1. 下载自己开发板对应的固件包，并通过烧录工具烧录进设备（后缀为.bin的文件）
-   - 参考：[Flash工具/Web端烧录固件（无IDF开发环境）](https://ccnphfhqs21z.feishu.cn/wiki/Zpz4wXBtdimBrLk25WdcXzxcnNS)
+   - 小智Pro最新固件下载：https://github.com/hougeai/xiaozhiPro/releases
+   - 烧录参考：[Flash工具/Web端烧录固件（无IDF开发环境）](https://ccnphfhqs21z.feishu.cn/wiki/Zpz4wXBtdimBrLk25WdcXzxcnNS)
+   - 如果没有找到开发板对应的固件包，可下载 [dev 分支](https://github.com/hougeai/xiaozhiPro/tree/dev)源码，自行编译烧录
 2. 确保已在【小智AI】控制台绑定设备：https://xiaozhi.me/ 
-3. 注册登录【小智Pro】控制台绑定设备：https://mkwyqeoebedx.sealosbja.site/
+3. 注册登录【小智Pro】控制台绑定设备：https://xzp.qlcloud.top/
 
-### 固件下载中心
-
-[小智Pro最新固件下载（免费）](https://github.com/hougeai/xiaozhiPro/releases)
-
-## 常见问题 ❓
-
-## 建议反馈 💬
-
-使用中有任何问题，欢迎+V，备注小智
-
-![小智Pro个人版反馈](qrcode.webp)
-
-## 更新日志 📅
-
-### 2026.07.30
-
-> 【小智Pro】设备端升级
-
-- 适配小智最新固件版本v2.4.0，支持所有官方仓库开发板型号
-- 音乐播放 / 闹钟提醒异步调用
-- 新增 MCP 工具 `self.music.list`：查询用户已上传的音乐列表
-- 修复部分开发板在 ESP-IDF v6.0.2 下的兼容性问题
-
-> 【小智Pro】服务端升级（设备端固件要求：v2.4.0.1 以上）
-
-- 新增 推理知识库（树索引 RAG），替代旧版向量知识库
-  - LLM 沿文档树逐层推理检索，对长文档、PPT、网页等定位更精准
-  - 支持 PDF/Word/PPT/Excel/HTML/图片/TXT/Markdown 多种格式，URL 自动抓取清洗
-  - 文档树视图查看层级结构与节点摘要
-  - 异步检索，避免设备连接超时
-  - 详见 [推理知识库](https://mkwyqeoebedx.sealosbja.site/docs/cn/user/kb-treerag)
-- 音乐功能调整：移除公网音乐搜索，仅支持用户自行上传音乐
-
-### 2026.06.20
-
-> 【小智Pro】服务端升级（设备端固件要求：v2.2.6.2 以上）
-
-- 新增 智能家居 控制功能，支持和您的 HomeAssistant(HA) 通信
-  - 通过 HA 的 REST API 连接你自建的 HA 实例，自动探测全屋可控制设备与传感器
-  - 支持在控制台手动调试每个实体服务调用
-  - 语音指挥小智控制全屋智能设备
-  - 详见 [控制HomeAssistant](https://mkwyqeoebedx.sealosbja.site/docs/cn/user/home-assistant)
-
-### 2026.06.10
-> 【小智Pro】固件适配 v2.2.6
-
-- 适配小智最新固件版本v2.2.6，支持所有官方仓库开发板型号
-
-> 【小智Pro】服务端升级（设备端固件要求：v2.2.6.1 以上）
-  
-- 新增 Hermes 控制功能，支持和您的 Hermes 通过 WebSocket 实时双向通信
-  - 无需公网 IP，安装插件即可自动连接
-  - 消息实时推送，支持 Hermes 主动推送、指定设备投递、所有设备广播
-  - 详见 [控制Hermes - 插件版](https://mkwyqeoebedx.sealosbja.site/docs/cn/user/hermes-server)
-
-### 2026.06.08
-
-> 【小智Pro】服务端升级（设备端固件要求：v2.2.5.1 以上）
-
-- 新增 OpenClaw 插件版（龙虾插件版），支持 WebSocket 实时双向通信
-  - 无需公网 IP，安装 `@xiaozhi-pro/openclaw-plugin` 插件即可自动连接
-  - 消息实时推送，支持 OpenClaw 主动推送、指定设备投递、所有设备广播
-  - 详见 [控制OpenClaw - 插件版](https://mkwyqeoebedx.sealosbja.site/docs/cn/user/openclaw-server.html)
-
-### 2026.04.19 - v2.2.5.1
-
-> 【小智Pro】固件适配 v2.2.5
-
-- 适配小智最新固件版本v2.2.5，支持所有官方仓库开发板型号
-  - 固件下载请移步：https://github.com/hougeai/xiaozhiPro/releases
-- 修复音乐播放导致设备重启的bug
-- 修复闹钟提醒时间同步的bug
-- 修复zhengchen-eye双屏显示的bug
-
-> 【小智Pro】服务端升级（设备端固件要求：v2.2.5.1 以上）
-
-- 全面升级 OpenClaw 控制功能
-  - 优化和 OpenClaw 通信逻辑，异步响应、可靠投递、消息防丢
-  - 在线配置 OpenClaw Gateway 连接参数
-  - 一键检测 OpenClaw Gateway 连接状态
-  - 查看 OpenClaw 智能体列表
-  - 切换小智对话的 OpenClaw 智能体
-  - 查看会话列表、查看会话历史记录
-
-### 2026.02.18 - v2.2.2.2
-> 【小智Pro】服务端升级（设备端固件要求：v2.2.2.2 以上）
-
-- 接入OpenClaw控制功能
-
-### 2026.02.12 - v2.2.2.1
-
-> 【小智Pro】固件适配 v2.2.2
-
-- 全面适配小智最新固件版本v2.2.2
-- 固件下载请移步：https://github.com/hougeai/xiaozhiPro/releases
-
-> 【小智Pro】服务端升级
-
-- 接入长期记忆功能
-- 接入视觉理解功能
-- 知识库添加默认模型，无需手动配置
-
-### 2026.01.15 - v2.1.0.1
-
-> 【小智Pro】固件适配 v2.1.0
-
-- 音乐播放支持 [唤醒词/唤醒按键] 停止播放
-- 修复 OTA 固件下载失败的问题
-- 全面适配小智最新固件版本v2.1.0
-- 固件下载请移步：https://github.com/hougeai/xiaozhiPro/releases
-
-### 2026.01.05
-
-> 【小智Pro】服务端升级
-
-- 支持固件在线更新（设备端固件要求：v2.0.5 以上）
-  - 自定义唤醒词
-  - 自定义表情包
-  - 自定义背景图
-
-![固件在线更新](https://objectstorageapi.ap-southeast-1.clawcloudrun.com/jt1m1jia-xiaozhi-pro/docs/1564edb6-35c4-47a5-bc91-3bf4a76b7e8e.webp)
-
-
-### 2025.12.25
->【小智Pro】服务端升级
-- API接口全面开放
-  - 新增远程控制API
-  - 新增设备相关API
-  - 新增知识库API
-- vitepress搭建官方文档，飞书doc将不再维护
-
-### 2025.12.20 - v2.0.5.1
->【小智Pro】固件适配 v2.0.5
-- 全面适配小智官方仓库收录的开发板型号
-- 固件下载请移步：https://github.com/hougeai/xiaozhiPro/releases
-
-### 2025.12.05
->【小智Pro】服务端升级
-
-- 新增接入点MCP一级目录：支持通过小智控制台的MCP接入点接入任意MCP服务：
-  - MCP 广场：汇集全网热门MCP服务，创建、管理和部署您的 MCP 服务
-  - MCP 绑定：管理设备的 MCP 服务：绑定/解绑/接入
-
-### 2025.11.08 - v2.0.4.2
-【小智Pro】固件适配 v2.0.4
-- 固件适配：适配小智官方最新 v2.0.4
-- 开发板支持：新增立创·实战派ESP32-S3开发板；九川智能；ESP-SparkBot开发板（坦克）
-
-### 2025.10.29 
->【小智Pro】服务端升级
-- 屏幕显示：新增屏幕显示功能：包括天气/空气质量/日历 等信息
-- OTA升级：小智Pro固件，支持自动OTA升级
-
-### 2025.10.24 
->【小智Pro】服务端升级
-- 知识库管理：新增支持接入Dify知识库（外部）
-
-### 2025.10.22 - V2.0.3.1
->【小智Pro】固件升级 V2.0.3.1
-- 新增知识库RAG功能（需VIP会员）
-  - 支持本地上传文件 / 网页地址URL
-  - 支持关键词检索 / 向量检索
-  - 支持多模态图片识别
-
-### 2025.10.14 - V2.0.3.0
->【小智Pro】固件升级公告 V2.0.3.0
-- 基于官方固件2.0.3开发，完成10+开发板适配 📦
-- 闹钟：支持云端更新，并和设备端同步 ⏰
-- 音乐：
-  - 支持新建歌单，支持歌单循环播放：顺序循环/随机循环 🔄
-  - 支持上传本地MP3文件 🎵
 
 # 小智Pro企业版 🏢
 
@@ -273,6 +118,6 @@
 - 管理后台
 - 服务端搭建
 
-欢迎咨询，+V，备注小智 📞
+使用中有任何问题，欢迎咨询，+V，备注小智 📞
 
 ![小智Pro企业版定制](qrcode.webp)
