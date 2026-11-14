@@ -8,6 +8,7 @@
 基于 [小智AI](https://github.com/78/xiaozhi-esp32) 开源固件扩展设备端能力：固件直接下载烧录即用，源码同步开源，支持定制化开发。🔧
 - 固件下载：[Releases](https://github.com/hougeai/xiaozhiPro/releases)
 - 源码仓库：[dev 分支](https://github.com/hougeai/xiaozhiPro/tree/dev)
+- 官方网站（控制台 / 文档）：https://xzp.qlcloud.top/
 
 更多精彩内容，欢迎关注公众号：猴哥的AI知识库
 
