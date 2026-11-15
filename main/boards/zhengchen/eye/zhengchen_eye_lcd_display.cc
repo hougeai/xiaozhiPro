@@ -49,7 +49,7 @@ void ZhengchenEyeLcdDisplay::SetupUI() {
     ESP_LOGI(TAG, "UI setup completed. overlay_container: %p, gif_label_: %p", overlay_container, gif_label_);
 }
 
-void ZhengchenEyeLcdDisplay::SetEmotion(const char* emotion) {
+bool ZhengchenEyeLcdDisplay::SetEmotion(const char* emotion) {
     // idle状态且 neutral 情绪 - 隐藏表情覆盖层，显示正常界面
     auto& app = Application::GetInstance();
     if (strcmp(emotion, "neutral") == 0 && app.GetDeviceState() == kDeviceStateIdle) {
@@ -66,7 +66,7 @@ void ZhengchenEyeLcdDisplay::SetEmotion(const char* emotion) {
         if (status_bar_ != nullptr) {
             lv_obj_clear_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
         }
-        return;
+        return true;
     }
 
     struct Emotion {
@@ -107,7 +107,7 @@ void ZhengchenEyeLcdDisplay::SetEmotion(const char* emotion) {
 
     if (gif_label_ == nullptr) {
         ESP_LOGI(TAG, "GIF label is null, cannot set emotion: %s", emotion);
-        return;  // 锁在作用域结束时自动释放
+        return true;  // 锁在作用域结束时自动释放
     }
 
     if (it != emotions.end()) {
@@ -140,6 +140,7 @@ void ZhengchenEyeLcdDisplay::SetEmotion(const char* emotion) {
     if (preview_image_ != nullptr) {
         lv_obj_add_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
     }
+    return true;
 }
 
 

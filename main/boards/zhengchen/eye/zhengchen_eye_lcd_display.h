@@ -19,7 +19,7 @@ public:
     using SpiLcdDisplay::SpiLcdDisplay;
     // 重写需要定制的方法
     void SetupUI();
-    void SetEmotion(const char* emotion) override;
+    bool SetEmotion(const char* emotion) override;
     void UpdateStatusBar(bool update_all = false) override;
     lv_obj_t* overlay_container = nullptr;
     lv_obj_t* gif_label_ = nullptr;
