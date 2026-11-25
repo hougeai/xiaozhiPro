@@ -416,10 +416,13 @@ void McpServer::AddCommonTools() {
             cJSON_Delete(result);
             return result_str;
         });
-    // openclaw
-    AddTool("self.openclaw.send",
-        "给openclaw(欧克劳)发消息，参数message为消息内容。",
+    // agent 统一通道
+    AddTool("self.agent.send",
+        "给指定的本地Agent发送任务消息。当用户想让某个Agent执行任务时调用，例如：让OpenClaw发飞书消息、让Hermes整理AI资讯、让Claude Code总结代码。"
+        "参数agent_id必须传以下英文标识之一，禁止传中文或其他内容：openclaw、hermes、claude、codex、qwen、opencode、qoder、minimax、kimi、codebuddy、deepseek、pi。"
+        "message为要发送的消息内容。",
         PropertyList({
+            Property("agent_id", kPropertyTypeString),
             Property("message", kPropertyTypeString)
         }),
         [](const PropertyList& properties) -> ReturnValue {
@@ -428,6 +431,7 @@ void McpServer::AddCommonTools() {
             http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
             http->SetTimeout(10000); // 设置超时时间
             // 构造请求的JSON数据
+            std::string agent_id = properties["agent_id"].value<std::string>();
             std::string message = properties["message"].value<std::string>();
             cJSON* json_data = cJSON_CreateObject();
             cJSON_AddStringToObject(json_data, "message", message.c_str());
@@ -436,32 +440,31 @@ void McpServer::AddCommonTools() {
             cJSON_free(json_string);
             cJSON_Delete(json_data);
             http->SetContent(std::move(data));
-            std::string base_url = std::string(CONFIG_SERVER_URL) + "/openclaw_send";
-    
+            std::string base_url = std::string(CONFIG_SERVER_URL) + "/agent_send?agent_id=" + agent_id;
+
             if (!http->Open("POST", base_url)) {
                 ESP_LOGE(TAG, "Failed to open HTTP connection");
-                return R"({"success":false,"message":"Failed to connect to openclaw"})";
+                return R"({"success":false,"message":"Failed to connect to agent"})";
             }
             int status_code = http->GetStatusCode().value_or(0);
             std::string response = http->ReadAll();
-            // ESP_LOGI(TAG, "openclaw.send response: %s", response.c_str());
             cJSON* root = cJSON_Parse(response.c_str());
             http->Close();
             if (status_code != 200) {
-                ESP_LOGE(TAG, "Openclaw request failed with status code: %d", status_code);
+                ESP_LOGE(TAG, "Agent request failed with status code: %d", status_code);
                 if (root) {
                     cJSON* msg = cJSON_GetObjectItem(root, "msg");
                     std::string error_msg = msg ? msg->valuestring : "Unknown error";
-                    ESP_LOGE(TAG, "Openclaw error message: %s", error_msg.c_str());
+                    ESP_LOGE(TAG, "Agent error message: %s", error_msg.c_str());
                     cJSON_Delete(root);
                     return std::string(R"({"success":false,"message":")" + error_msg + R"("})");
                 }
-                return R"({"success":false,"message":"Openclaw request failed"})";
+                return R"({"success":false,"message":"Agent request failed"})";
             }
-            
+
             if (!root) {
-                ESP_LOGE(TAG, "Failed to parse Openclaw response");
-                return R"({"success":false,"message":"Failed to parse Openclaw response"})";
+                ESP_LOGE(TAG, "Failed to parse Agent response");
+                return R"({"success":false,"message":"Failed to parse Agent response"})";
             }
             cJSON* data_item = cJSON_GetObjectItem(root, "data");
             if (!data_item || !cJSON_IsString(data_item)) {
@@ -480,156 +483,43 @@ void McpServer::AddCommonTools() {
             cJSON_Delete(result);
             return result_str;
         });
-    AddTool("self.openclaw.retrieve",
-        "当收到'欧克劳报告'时，请调用此工具检索openclaw(欧克劳)最新消息",
-        PropertyList(),
-        [](const PropertyList& properties) -> ReturnValue {
-            auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
-            http->SetHeader("Content-Type", "application/json");
-            http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
-            http->SetTimeout(10000); // 设置超时时间
-            std::string base_url = std::string(CONFIG_SERVER_URL) + "/openclaw_retrieve";
-    
-            if (!http->Open("GET", base_url)) {
-                ESP_LOGE(TAG, "Failed to open HTTP connection");
-                return R"({"success":false,"message":"Failed to connect to openclaw"})";
-            }
-            int status_code = http->GetStatusCode().value_or(0);
-            std::string response = http->ReadAll();
-            // ESP_LOGI(TAG, "openclaw.retrieve response: %s", response.c_str());
-            cJSON* root = cJSON_Parse(response.c_str());
-            http->Close();
-            if (status_code != 200) {
-                ESP_LOGE(TAG, "Openclaw request failed with status code: %d", status_code);
-                if (root) {
-                    cJSON* msg = cJSON_GetObjectItem(root, "msg");
-                    std::string error_msg = msg ? msg->valuestring : "Unknown error";
-                    ESP_LOGE(TAG, "Openclaw error message: %s", error_msg.c_str());
-                    cJSON_Delete(root);
-                    return std::string(R"({"success":false,"message":")" + error_msg + R"("})");
-                }
-                return R"({"success":false,"message":"Openclaw request failed"})";
-            }
-            
-            if (!root) {
-                ESP_LOGE(TAG, "Failed to parse Openclaw response");
-                return R"({"success":false,"message":"Failed to parse Openclaw response"})";
-            }
-            cJSON* data_item = cJSON_GetObjectItem(root, "data");
-            if (!data_item || !cJSON_IsString(data_item)) {
-                cJSON_Delete(root);
-                return R"({"success":false,"message":"Empty"})";
-            }
-            std::string data_str = data_item->valuestring;
-            cJSON_Delete(root);
-            // 构造简化后的响应
-            cJSON* result = cJSON_CreateObject();
-            cJSON_AddStringToObject(result, "data", data_str.c_str());
-            cJSON_AddBoolToObject(result, "success", true);
-            char* result_json = cJSON_PrintUnformatted(result);
-            std::string result_str(result_json);
-            cJSON_free(result_json);
-            cJSON_Delete(result);
-            return result_str;
-        });
-    // hermes
-    AddTool("self.hermes.send",
-        "给hermes(爱马仕)发消息，参数message为消息内容。",
+    AddTool("self.agent.retrieve",
+        "检索指定Agent的最新回复。当收到Agent报告类唤醒（如'openclaw报告'、'hermes报告'等），或用户询问某个Agent的执行结果时调用。"
+        "参数agent_id必须传以下英文标识之一，禁止传中文或其他内容：openclaw、hermes、claude、codex、qwen、opencode、qoder、minimax、kimi、codebuddy、deepseek、pi。",
         PropertyList({
-            Property("message", kPropertyTypeString)
+            Property("agent_id", kPropertyTypeString)
         }),
         [](const PropertyList& properties) -> ReturnValue {
             auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
             http->SetHeader("Content-Type", "application/json");
             http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
             http->SetTimeout(10000); // 设置超时时间
-            // 构造请求的JSON数据
-            std::string message = properties["message"].value<std::string>();
-            cJSON* json_data = cJSON_CreateObject();
-            cJSON_AddStringToObject(json_data, "message", message.c_str());
-            char* json_string = cJSON_PrintUnformatted(json_data);
-            std::string data(json_string);
-            cJSON_free(json_string);
-            cJSON_Delete(json_data);
-            http->SetContent(std::move(data));
-            std::string base_url = std::string(CONFIG_SERVER_URL) + "/hermes_send";
-    
-            if (!http->Open("POST", base_url)) {
-                ESP_LOGE(TAG, "Failed to open HTTP connection");
-                return R"({"success":false,"message":"Failed to connect to hermes"})";
-            }
-            int status_code = http->GetStatusCode().value_or(0);
-            std::string response = http->ReadAll();
-            // ESP_LOGI(TAG, "hermes.send response: %s", response.c_str());
-            cJSON* root = cJSON_Parse(response.c_str());
-            http->Close();
-            if (status_code != 200) {
-                ESP_LOGE(TAG, "hermes request failed with status code: %d", status_code);
-                if (root) {
-                    cJSON* msg = cJSON_GetObjectItem(root, "msg");
-                    std::string error_msg = msg ? msg->valuestring : "Unknown error";
-                    ESP_LOGE(TAG, "hermes error message: %s", error_msg.c_str());
-                    cJSON_Delete(root);
-                    return std::string(R"({"success":false,"message":")" + error_msg + R"("})");
-                }
-                return R"({"success":false,"message":"hermes request failed"})";
-            }
-            
-            if (!root) {
-                ESP_LOGE(TAG, "Failed to parse hermes response");
-                return R"({"success":false,"message":"Failed to parse hermes response"})";
-            }
-            cJSON* data_item = cJSON_GetObjectItem(root, "data");
-            if (!data_item || !cJSON_IsString(data_item)) {
-                cJSON_Delete(root);
-                return R"({"success":false,"message":"Empty"})";
-            }
-            std::string data_str = data_item->valuestring;
-            cJSON_Delete(root);
-            // 构造简化后的响应
-            cJSON* result = cJSON_CreateObject();
-            cJSON_AddStringToObject(result, "data", data_str.c_str());
-            cJSON_AddBoolToObject(result, "success", true);
-            char* result_json = cJSON_PrintUnformatted(result);
-            std::string result_str(result_json);
-            cJSON_free(result_json);
-            cJSON_Delete(result);
-            return result_str;
-        });
-    AddTool("self.hermes.retrieve",
-        "当收到'Hermes报告'时，请调用此工具检索hermes(爱马仕)最新消息",
-        PropertyList(),
-        [](const PropertyList& properties) -> ReturnValue {
-            auto http = Board::GetInstance().GetNetwork()->CreateHttp(1);
-            http->SetHeader("Content-Type", "application/json");
-            http->SetHeader("Device-ID", SystemInfo::GetMacAddress().c_str());
-            http->SetTimeout(10000); // 设置超时时间
-            std::string base_url = std::string(CONFIG_SERVER_URL) + "/hermes_retrieve";
-    
+            std::string agent_id = properties["agent_id"].value<std::string>();
+            std::string base_url = std::string(CONFIG_SERVER_URL) + "/agent_retrieve?agent_id=" + agent_id;
+
             if (!http->Open("GET", base_url)) {
                 ESP_LOGE(TAG, "Failed to open HTTP connection");
-                return R"({"success":false,"message":"Failed to connect to hermes"})";
+                return R"({"success":false,"message":"Failed to connect to agent"})";
             }
             int status_code = http->GetStatusCode().value_or(0);
             std::string response = http->ReadAll();
-            // ESP_LOGI(TAG, "hermes.retrieve response: %s", response.c_str());
             cJSON* root = cJSON_Parse(response.c_str());
             http->Close();
             if (status_code != 200) {
-                ESP_LOGE(TAG, "hermes request failed with status code: %d", status_code);
+                ESP_LOGE(TAG, "Agent request failed with status code: %d", status_code);
                 if (root) {
                     cJSON* msg = cJSON_GetObjectItem(root, "msg");
                     std::string error_msg = msg ? msg->valuestring : "Unknown error";
-                    ESP_LOGE(TAG, "hermes error message: %s", error_msg.c_str());
+                    ESP_LOGE(TAG, "Agent error message: %s", error_msg.c_str());
                     cJSON_Delete(root);
                     return std::string(R"({"success":false,"message":")" + error_msg + R"("})");
                 }
-                return R"({"success":false,"message":"hermes request failed"})";
+                return R"({"success":false,"message":"Agent request failed"})";
             }
-            
+
             if (!root) {
-                ESP_LOGE(TAG, "Failed to parse hermes response");
-                return R"({"success":false,"message":"Failed to parse hermes response"})";
+                ESP_LOGE(TAG, "Failed to parse Agent response");
+                return R"({"success":false,"message":"Failed to parse Agent response"})";
             }
             cJSON* data_item = cJSON_GetObjectItem(root, "data");
             if (!data_item || !cJSON_IsString(data_item)) {
