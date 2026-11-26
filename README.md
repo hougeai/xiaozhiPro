@@ -1,11 +1,11 @@
-# 小智Pro个人版 🚀
+# 小智Pro个人版
 
 ## 简介 ℹ️
 
 - **项目名称**：小智Pro
-- **项目简介**：利用 MCP，为小智 AI 接入三头六臂，打造您身边的全能 AI 助手。🤖
+- **项目简介**：利用 MCP，为小智 AI 接入三头六臂，打造您身边的全能 AI 助手。
 
-基于 [小智AI](https://github.com/78/xiaozhi-esp32) 开源固件扩展设备端能力：固件直接下载烧录即用，源码同步开源，支持定制化开发。🔧
+基于 [小智AI](https://github.com/78/xiaozhi-esp32) 开源固件扩展设备端能力：固件直接下载烧录即用，源码同步开源，支持定制化开发。
 - 固件下载：[Releases](https://github.com/hougeai/xiaozhiPro/releases)
 - 源码仓库：[dev 分支](https://github.com/hougeai/xiaozhiPro/tree/dev)
 - 官方网站（控制台 / 文档）：https://xzp.qlcloud.top/
@@ -72,14 +72,11 @@
 - 无需设备端摄像头，通过浏览器摄像头，为小智接入'实时眼睛'
 - 接入 Qwen-VL / GLM 等视觉模型，为小智提供视觉理解能力
 
-#### OpenClaw控制 🦾
+#### 指挥本地 Agent 🦾
 
-- 平台打通了和 `openclaw` 的通信
-- 支持用户接入自己的 `openclaw` ，并在设备端通过语音指挥 `openclaw`
+- 通过 Agent Connector 接入本地 Agent，设备端语音指挥它们干活
+- 当前已支持 12 种 Agent：OpenClaw、Hermes、Codex、Claude Code、Qwen Code、OpenCode、Qoder、MiniMax Code、Kimi Code、CodeBuddy、DeepSeek Harness、Pi
 
-#### Hermes控制
-- 平台打通了和 `Hermes` 的通信
-- 支持用户接入自己的 `Hermes`，并在设备端通过语音指挥 `Hermes`
 
 #### 智能家居HA控制
 - 平台打通了和 `Home Assistant` 的通信
@@ -92,14 +89,14 @@
 
 - **开放扩展性**：通过MCP（模块化连接协议）架构，为AI助手提供无限扩展能力
 - **本地化部署**：支持在设备端直接运行MCP服务，保护隐私并减少延迟
-- **丰富功能**：涵盖闹钟提醒、音乐播放、知识库、长期记忆、视觉理解、OpenClaw控制等多种实用功能
+- **丰富功能**：涵盖闹钟提醒、音乐播放、知识库、长期记忆、视觉理解、Agent 接入等多种实用功能
 - **社区生态**：通过MCP广场实现服务共享，构建丰富的功能生态
 - **灵活配置**：支持多种接入点配置，适应不同使用场景
 - **计划升级**：未来将支持更多高级功能
 
 完整版本更新日志，请移步官方文档：https://xzp.qlcloud.top/docs/cn/user/release.html
 
-## 安装使用 🛠️
+## 安装使用
 
 三步走：
 
@@ -111,7 +108,7 @@
 3. 注册登录【小智Pro】控制台绑定设备：https://xzp.qlcloud.top/
 
 
-# 小智Pro企业版 🏢
+# 小智Pro企业版
 
 私有化定制：小智Pro全套解决方案☁️
 - 设备端核心功能
