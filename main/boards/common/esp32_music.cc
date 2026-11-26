@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cctype>  // 为isdigit函数
 #include <memory>
+#include <vector>
 #include <utility>
 #include <thread>   // 为线程ID比较
 #include <freertos/FreeRTOS.h>
@@ -405,10 +406,11 @@ void Esp32Music::DownloadAudioStream(const std::string& music_url) {
         }
         // 分块读取音频数据
         const size_t chunk_size = 4096;  // 4KB每块
-        char buffer[chunk_size]; // 循环使用的临时缓冲区
+        // 上游 v2.6.0 限制项目代码单帧栈 ≤1536B（-Werror=frame-larger-than），4KB 缓冲改堆分配
+        std::vector<char> buffer(chunk_size); // 循环使用的临时缓冲区
         // 只有当下载和播放都处于活动状态时才继续，如果用户停止播放||下载错误，都停止下载
         while (is_downloading_ && is_playing_) {
-            int bytes_read = http->Read(buffer, chunk_size).value_or(-1);
+            int bytes_read = http->Read(buffer.data(), chunk_size).value_or(-1);
             if (bytes_read < 0) {
                 // 读取出错（连接被对端关闭/超时），视为异常断开，尝试断点续传
                 resume_from = total_downloaded_;
@@ -425,19 +427,19 @@ void Esp32Music::DownloadAudioStream(const std::string& music_url) {
             }
             // 只在第一次读取时检测文件类型
             if (total_downloaded_ == 0 && bytes_read >= 4) {
-                if (memcmp(buffer, "ID3", 3) == 0) {
+                if (memcmp(buffer.data(), "ID3", 3) == 0) {
                     ESP_LOGI(TAG, "Detected MP3 file with ID3 tag");
                     detected_format_ = FORMAT_MP3; // 含有id3头部，后面需要skip
                 } else if (buffer[0] == 0xFF && (buffer[1] & 0xE0) == 0xE0) {
                     ESP_LOGI(TAG, "Detected MP3 file header");
                     detected_format_ = FORMAT_MP3; // 纯MP3数据，后面不需要skip
-                } else if (memcmp(buffer, "RIFF", 4) == 0) {
+                } else if (memcmp(buffer.data(), "RIFF", 4) == 0) {
                     ESP_LOGI(TAG, "Detected WAV file");
                     detected_format_ = FORMAT_WAV;
-                } else if (memcmp(buffer, "fLaC", 4) == 0) {
+                } else if (memcmp(buffer.data(), "fLaC", 4) == 0) {
                     ESP_LOGI(TAG, "Detected FLAC file");
                     detected_format_ = FORMAT_FLAC;
-                } else if (memcmp(buffer, "OggS", 4) == 0) {
+                } else if (memcmp(buffer.data(), "OggS", 4) == 0) {
                     ESP_LOGI(TAG, "Detected OGG file");
                     detected_format_ = FORMAT_OGG;
                 } else {
@@ -457,7 +459,7 @@ void Esp32Music::DownloadAudioStream(const std::string& music_url) {
                 ESP_LOGE(TAG, "Failed to allocate memory for audio chunk");
                 break;
             }
-            memcpy(chunk_data, buffer, bytes_read); // 复制到独立内存
+            memcpy(chunk_data, buffer.data(), bytes_read); // 复制到独立内存
             
             // 等待缓冲区有空间
             {
@@ -550,6 +552,14 @@ void Esp32Music::PlayAudioStream() {
             is_playing_ = false;
             return;
         }
+    // PCM 输出缓冲（堆分配，同受 frame-larger-than 栈限制约束）
+    int16_t* pcm_buffer = (int16_t*)heap_caps_malloc(2304 * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    if (!pcm_buffer) {
+        ESP_LOGE(TAG, "Failed to allocate PCM buffer");
+        heap_caps_free(mp3_input_buffer);
+        is_playing_ = false;
+        return;
+    }
     
     // 标记是否已经处理过ID3标签
     bool id3_processed = false;
@@ -659,8 +669,7 @@ void Esp32Music::PlayAudioStream() {
             bytes_left -= sync_offset;
         }
         
-        // 解码MP3帧
-        int16_t pcm_buffer[2304]; // MP3编码有固定的帧结构：单声道每帧=1152个样本，立体声1152 × 2 = 2304
+        // 解码MP3帧（pcm_buffer 已在函数顶部堆分配，单声道每帧=1152样本，立体声1152×2=2304）
         int decode_result = MP3Decode(mp3_decoder_, &read_ptr, &bytes_left, pcm_buffer, 0);
         // MP3Decode会自动更新read_ptr和bytes_left，read_ptr会指向下一帧的开始，bytes_left会减去已消费的字节数
         if (decode_result == 0) {
@@ -748,6 +757,11 @@ void Esp32Music::PlayAudioStream() {
     if (mp3_input_buffer) {
         heap_caps_free(mp3_input_buffer);
         mp3_input_buffer = nullptr;
+    }
+
+    if (pcm_buffer) {
+        heap_caps_free(pcm_buffer);
+        pcm_buffer = nullptr;
     }
     
     // 播放结束时进行基本清理，但不调用StopStreaming避免线程自我等待
